@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
+import { Analytics } from "@vercel/analytics/next";
 import { 
   IconShieldCheck, 
   IconAlertOctagon, 
@@ -175,7 +176,7 @@ export default function HealysisDashboard() {
   const [simulating, setSimulating] = useState(false);
 
   // Advisor state
-  const [queryInput, setQueryInput] = useState<string>("");
+  const [queryInput, setQueryInput] = useState<string>("" );
   const [queryResponse, setQueryResponse] = useState<string | null>(null);
   const [querying, setQuerying] = useState<boolean>(false);
 
@@ -338,7 +339,6 @@ export default function HealysisDashboard() {
     }
   };
 
-  // 1. Submit Requisition Flow (Staff Node -> PENDING_APPROVAL)
   const handleCreateRequisition = async (e: React.FormEvent) => {
     e.preventDefault();
     if (reqSource === reqTarget) {
@@ -371,7 +371,6 @@ export default function HealysisDashboard() {
     }
   };
 
-  // 2. CDMO Director Authorization Action (Approve / Reject)
   const handleAuthorizeAction = async (reqId: string, action: "APPROVE" | "REJECT") => {
     try {
       setReqActionLoading(reqId);
@@ -527,6 +526,7 @@ export default function HealysisDashboard() {
 
   return (
     <div className="min-h-screen bg-[#F4F4F4] text-slate-900 flex flex-col font-sans antialiased selection:bg-[#1D546C] selection:text-white">
+      <Analytics />
       
       {/* Sticky Header */}
       <header className="bg-white/95 backdrop-blur-md border-b border-slate-200 px-6 py-3 shadow-xs flex items-center justify-between sticky top-0 z-50">
@@ -736,9 +736,7 @@ export default function HealysisDashboard() {
           </div>
         </div>
 
-        {/* ========================================================================= */}
         {/* SECTION 1: TWO-TIER CDMO REQUISITION & AUTHORIZATION DESK */}
-        {/* ========================================================================= */}
         {isCDMO ? (
           <div id="cdmo-authorization-desk" className="bg-white p-6 rounded-xl border-2 border-amber-500/40 shadow-xs hover:border-amber-500 transition-colors">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-slate-200 pb-3 mb-4 gap-2">
@@ -1268,9 +1266,7 @@ export default function HealysisDashboard() {
           </div>
         </div>
 
-        {/* ========================================================================= */}
-        {/* GEMINI FORENSIC AUDIT BRIEF MODAL (CLEAN & WITH PDF EXPORT) */}
-        {/* ========================================================================= */}
+        {/* GEMINI FORENSIC AUDIT BRIEF MODAL */}
         {selectedEvent && (
           <div className="bg-white p-6 rounded-xl border-2 border-[#1D546C] shadow-lg animate-in fade-in slide-in-from-bottom-3 duration-200">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-slate-200 pb-3 mb-4 gap-2">
