@@ -1,140 +1,211 @@
-# 🛡️ Healysis Sentry Network
-**Tamper-Evident Health Telemetry & Federated Forensic AI for Primary Health Centres (PHCs)**
+<div align="center">
+
+# 🛡️ HEALYSIS SENTRY NETWORK
+### Cryptographic Health Telemetry & Federated Forensic AI for Primary Health Centres
+
+[![FastAPI](https://img.shields.io/badge/FastAPI-005571?style=for-the-badge&logo=fastapi)](https://fastapi.tiangolo.com)
+[![Next.js 15](https://img.shields.io/badge/Next.js%2015-black?style=for-the-badge&logo=next.js&logoColor=white)](https://nextjs.org/)
+[![Google Gemini 2.5](https://img.shields.io/badge/Google%20Gemini-8E75C2?style=for-the-badge&logo=googlebard&logoColor=white)](https://aistudio.google.com/)
+[![SHA-256 Chained](https://img.shields.io/badge/Ledger-SHA--256%20Cryptographic-0ea5e9?style=for-the-badge&logo=shield)](https://en.wikipedia.org/wiki/SHA-2)
+[![License: MIT](https://img.shields.io/badge/License-MIT-emerald?style=for-the-badge)](https://opensource.org/licenses/MIT)
+
+<p align="center">
+  <b>Securing every medicine vial, cold-chain excursion, and hospital bed across peripheral health centers.</b><br />
+  Combines immutable hash chaining with two-tier CDMO director stock authorization and instant AI forensic briefs.
+</p>
+
+[Explore Key Features](#-core-features-matrix) • [Architecture](#-neural-forensic-architecture) • [Live Personas](#-role-based-access-personas) • [Quickstart](#-quickstart-guide)
 
 ---
 
-## 1. The Header & Hook
-**Healysis Sentry Network** is a cryptographically secured public health supply-chain telemetry platform that tracks live medicine inventory, prevents ghost drawdowns, and orchestrates two-tier emergency stock rebalancing across Primary and Community Health Centres (PHCs/CHCs) using **SHA-256 block-chaining** and **Google Gemini 2.5/2.0 Flash**.
+</div>
+
+## 🌐 The Problem & Solution Match
+
+| The Real-World Crisis (Remote PHCs) | The Healysis Engineering Fix |
+| :--- | :--- |
+| **Silent Stockouts:** Remote health posts run out of ORS/Insulin without central alert triggers. | **Real-Time Dynamic Telemetry:** Live mathematical consumption modeling tracks balance in real time. |
+| **Ghost Drawdowns (Theft):** Bulk medicine drawdowns logged against 0 or 1 OPD footfall. | **Deterministic Sentry Engine:** Instant anomaly scoring and encounter token cross-matching. |
+| **Ledger Tampering:** Clerical alteration of manual register logs or local database rows. | **SHA-256 Block Chaining:** Immutable hash sequence ( = \text{SHA256}(H_{n-1} + \text{Data})$). |
+| **Uncoordinated Aid:** Stock rebalancing happens manually without director-level verification. | **Two-Tier CDMO Desk:** Frontline staff request stock; Central CDMO authorizes atomic dispatch. |
 
 ---
 
-## 2. The Problem & Solution Match
+## ⚡ Core Features Matrix
 
-### The Crisis: Vulnerable Health Supply Chains in Developing Regions
-* **Zero Real-Time Visibility:** Peripheral PHCs operate on fragmented, manual paper records, causing unlogged stockouts for critical medicines (ORS, Insulin, Antibiotics).
-* **Undocumented Parallel Diversion (Ghost Drawdowns):** High medicine drawdowns are frequently recorded against near-zero registered patient footfall, masking gray-market leakage.
-* **Cold-Chain & Spoilage Failures:** Temperature-sensitive vaccines and biologics spoil in ILR units without real-time audit flags.
+### 🔐 1. Cryptographic SHA-256 Telemetry Ledger
+* **Genesis-Anchored Immutability:** Every transaction is linked to the previous block hash starting from GENESIS_ROOT_HEALYSIS_000.
+* **1-Click Ledger Audit:** Real-time hash recalculation engine that pinpoints the exact corrupted block index (roken_at) in (N)$ time if any row is tampered.
+* **Zero-PII Tokenization:** Tracks patient interactions using anonymous encounter tokens (PAT-IN-8921) without storing personal identity data.
 
-### The Healysis Solution
-* **Cryptographic Block Verification:** Every dispense, receive, and spoilage event is linked in a sequential SHA-256 hash chain anchored to a genesis root.
-* **Two-Tier CDMO Authorization:** Frontline staff log emergency requisitions, but physical and cryptographic transfer blocks are dispatched only upon Chief District Medical Officer (CDMO) authorization.
-* **Automated Forensic AI Triage:** Google Gemini correlates clinical encounter tokens, footfall, and bed occupancy to generate 4-part legal audit dockets with one-click official PDF exports.
+### 🧠 2. Google Gemini 2.5 Flash Forensic Triage Engine
+* **4-Part Executive Brief:** Converts flagged transactions into structured audit dockets:
+  1. *Executive Incident Classification*
+  2. *Forensic Evidence & Statistical Correlation*
+  3. *Suspected Root Cause Analysis*
+  4. *CDMO Operational Directives*
+* **Deterministic Fallback Engine:** Built-in heuristic audit generator ensures 100% operational uptime even during external API downtime.
+* **Printable PDF Export:** Native one-click browser print pipeline that formats forensic incident case briefs with cryptographic block seals.
 
----
-
-## 3. Core Features Breakdown
-
-### Backend Engineering Engines
-* **SHA-256 Cryptographic Ledger:** Computes event block hashes ( = \text{SHA256}(H_{n-1} + \text{Payload})$) ensuring immediate (1)$ tamper detection with exact index tracking (roken_at).
-* **Two-Tier Requisition & Dispatch Engine:** Implements atomic dual-block execution (paired DISPENSE at source and RECEIVE at target) only upon director signature.
-* **Multi-Layer Threat Filtering:** Regex sanitization layer guarding endpoints against SQLi (UNION SELECT), XSS (<script>), and LLM Jailbreak/Prompt Injections.
-* **Sliding-Window Rate Limiter:** Hardened sentinel restricting bursts to 30 requests/minute per client IP.
-
-### Frontend Operations & Clinical UX
-* **5 Contextual RBAC Personas:** Seamlessly switch between frontline MOs, Pharmacists, Nurse Admins across Odisha & Bengal clusters, and the Central CDMO Director Hub.
-* **One-Click Anomaly Simulation:** Immediate injection of high-severity ghost drawdowns for interactive evaluation and stress testing.
-* **Official Forensic PDF Export:** Native print-engine pipeline converting AI forensic audits into signed district health briefs.
-* **Dual Language Localization:** Real-time interface translation supporting both **English** and **हिंदी**.
+### 🏛️ 3. Two-Tier CDMO Requisition & Authorization Desk
+* **Frontline Node Mode:** Health workers in remote facilities (Jatni, Cuttack, Pipili, Behala) can submit emergency requisitions (PENDING_APPROVAL).
+* **CDMO Director Desk:** District authority reviews incoming emergency requests and signs cryptographic dispatch blocks directly into the network chain.
 
 ---
 
-## 4. The AI Architecture (Deep Dive)
+## 🏗️ Neural Forensic Architecture
 
 \\\
-+-----------------------------------------------------------------------------------+
-|                        HEALYSIS NEURAL TELEMETRY PIPELINE                         |
-+-----------------------------------------------------------------------------------+
+  +-------------------------------------------------------------------------------+
+  |                          HEALYSIS TELEMETRY PIPELINE                          |
+  +-------------------------------------------------------------------------------+
                                           |
-   [Raw PHC Telemetry Stream]             |-----> [Rule Sentry Evaluator]
-   (Qty, Footfall, Token, SKU)            |       (RULE_GHOST_DISPENSE, BULK_DRAW)
+   [Frontline PHC Telemetry Stream]       |-----> [Cryptographic Ledger Block]
+   (Qty, Footfall, Bed, Token, SKU)       |       (SHA-256 Chained to Genesis)
                                           |
                                           v
-                              [Anomaly Flagged (>=Medium)]
+                              [Deterministic Rule Sentry]
+                              (GHOST_DRAW, BULK_DEPLETION)
                                           |
-                                          +---------------------------------+
-                                          |                                 |
-                                          v                                 v
-                             [Primary AI Pipeline]             [Deterministic Engine]
-                             (Gemini 2.5/2.0 Flash)            (Statistical Baseline)
-                                          |                                 |
-                                          +----------------+----------------+
-                                                           |
-                                                           v
-                                            [4-Part Forensic Audit Docket]
-                                            1. Incident Classification
-                                            2. Evidence Correlation
-                                            3. Root Cause Analysis
-                                            4. CDMO Directives
-                                                           |
-                                                           v
-                                            [Export Signed Audit PDF]
+                   +----------------------+----------------------+
+                   | (Passed Integrity)                          | (Anomaly Flagged)
+                   v                                             v
+          [✅ Ledger Verified]                        [🚨 Forensic Triage Queue]
+                                                                 |
+                                              +------------------+------------------+
+                                              |                                     |
+                                              v                                     v
+                                   [Google Gemini 2.5 Flash]              [Deterministic Engine]
+                                   (Neural Forensic Model)                (Statistical Baseline)
+                                              |                                     |
+                                              +------------------+------------------+
+                                                                 |
+                                                                 v
+                                                 [4-Part Forensic Audit Brief]
+                                                 - Incident Classification
+                                                 - Correlation Matrix
+                                                 - Suspected Root Cause
+                                                 - CDMO Directives
+                                                                 |
+                                                                 v
+                                                    [📥 Export Verifiable PDF]
 \\\
 
-* **Structured Forensic Docket Generation:** Gemini correlates multi-variable parameters (e.g., 85 units of ORS dispensed against 1 patient with NULL token) into clinical audit findings.
-* **Deterministic Fallback Engine:** If external API latency exceeds threshold or connectivity drops, an internal rule-based heuristic generates a complete clinical audit brief ensuring zero downtime.
-* **State-Aware Geo-Fenced Advisor:** Live inventory math evaluation ($\text{Inventory} = \text{Base} + \text{Receive} - \text{Dispense} - \text{Spoilage}$) strictly bounded by district borders (Odisha vs. West Bengal).
+---
+
+## 🧑‍⚕️ Role-Based Access Personas
+
+The dashboard features **5 distinct authenticated roles** across two states to simulate district-wide operations:
+
+| Persona | Location / Node | State | Role Scope |
+| :--- | :--- | :---: | :--- |
+| **Dr. A. Nayak (MO)** | Jatni CHC (Khordha) | OD | Frontline reporting & local stock audit |
+| **S. Patra (Pharmacist)** | UPHC MS Das (Kafla Bazar) | OD | Urban dispensary stock dispensation |
+| **R. Mohanty (Inventory)** | Pipili PHC (Puri) | OD | Rural health buffer monitoring |
+| **T. Banerjee (Nurse Admin)** | Behala Urban PHC (Kolkata) | WB | Metro clinic triage & emergency request |
+| **CDMO District Director** | Central Directorate Hub | HQ | Multi-District Requisition Authorization |
 
 ---
 
-## 5. Technical Stack & Engineering Choices
+## 💻 Tech Stack & Engineering Decisions
 
-| Layer | Technologies / Tools | Technical Decision Justification |
-| :--- | :--- | :--- |
-| **Frontend UI/UX** | Next.js 15 (App Router), React 19, TypeScript | Server-rendered structural scaffolding and sub-second client transitions. |
-| **Styling & Icons** | Tailwind CSS, @tabler/icons-react | Clean, high-density clinical dashboard aesthetics. |
-| **Backend API** | Python 3.11+, FastAPI, Uvicorn | Asynchronous endpoint execution with sub-millisecond telemetry routing. |
-| **Data Validation** | Pydantic V2 | Strict data-type enforcement and input sanitization before ledger compute. |
-| **Cryptography** | Python \hashlib\ (SHA-256) | Zero-dependency cryptographic hashing for verifiable audit chaining. |
-| **Generative AI** | Google GenAI SDK (Gemini 2.5 / 2.0 Flash) | High token throughput with clinical forensic reasoning and structured output. |
+<table align="center">
+  <tr>
+    <td align="center" width="96">
+      <img src="https://skillicons.dev/icons?i=nextjs" width="48" height="48" alt="Next.js" />
+      <br>Next.js 15
+    </td>
+    <td align="center" width="96">
+      <img src="https://skillicons.dev/icons?i=react" width="48" height="48" alt="React" />
+      <br>React 19
+    </td>
+    <td align="center" width="96">
+      <img src="https://skillicons.dev/icons?i=tailwind" width="48" height="48" alt="Tailwind" />
+      <br>Tailwind CSS
+    </td>
+    <td align="center" width="96">
+      <img src="https://skillicons.dev/icons?i=ts" width="48" height="48" alt="TypeScript" />
+      <br>TypeScript
+    </td>
+    <td align="center" width="96">
+      <img src="https://skillicons.dev/icons?i=fastapi" width="48" height="48" alt="FastAPI" />
+      <br>FastAPI
+    </td>
+    <td align="center" width="96">
+      <img src="https://skillicons.dev/icons?i=py" width="48" height="48" alt="Python" />
+      <br>Python 3.11+
+    </td>
+  </tr>
+</table>
+
+* **Frontend:** Next.js 15 App Router with Tabler Icons and localized English/Hindi translation layers.
+* **Backend:** FastAPI with asynchronous request routing, Pydantic V2 schema validation, and sliding-window rate limiting.
+* **Security Layer:** Regex sanitization protecting against SQLi, XSS, and LLM Prompt Injection attacks.
+* **AI/LLM:** Google GenAI SDK powered by Gemini 2.5 Flash for high-speed clinical reasoning.
 
 ---
 
-## 6. Engineering Triumphs (The Solo Dev Factor)
+## 🚀 Quickstart Guide
 
-* **Cryptographic Tamper Pinpointing:** Built a bidirectional hash verification algorithm that traverses the chain from GENESIS_ROOT_HEALYSIS_000 to the latest block, pinpointing the exact compromised block ID and array index in (N)$ time.
-* **Low-Bandwidth Resilient Schema:** Stripped heavy blockchain consensus overhead (Proof-of-Work/Stake) down to lean, deterministic SHA-256 state hashing suitable for low-connectivity rural health outposts.
-* **Zero Secret Leakage Architecture:** Designed isolated environment boundary masking ensuring API keys and administrative credentials are never exposed in client bundles or public commits.
-
----
-
-## 7. Setup & Run Instructions
-
-### Prerequisites
-* **Node.js**: v18.18+ or v20+
-* **Python**: v3.10+
-* **Gemini API Key**: [Google AI Studio](https://aistudio.google.com/)
-
-### 1. Clone & Configure
+### 1. Clone the Repository
 \\\ash
 git clone https://github.com/Halanaaz1401/healysis-sentry-network.git
 cd healysis-sentry-network
 \\\
 
-### 2. Backend Setup
+### 2. Configure Backend
 \\\ash
 cd backend
 python -m venv .venv
 
-# Windows:
+# On Windows:
 .venv\Scripts\activate
-# Linux/macOS:
+# On macOS/Linux:
 # source .venv/bin/activate
 
 pip install -r requirements.txt
 
-# Create .env file
-echo GEMINI_API_KEY=your_actual_gemini_api_key_here > .env
+# Create environment file
+echo GEMINI_API_KEY="your_gemini_api_key_here" > .env
 
-# Run FastAPI Server (Port 8000)
+# Start FastAPI Engine
 uvicorn main:app --reload --port 8000
 \\\
 
-### 3. Frontend Setup
+### 3. Launch Frontend Dashboard
 \\\ash
-# In a new terminal window:
+# Open a second terminal:
 cd frontend
 npm install
 npm run dev
 \\\
 
-Open **http://localhost:3000** in your browser to access the live dashboard.
+Open **[http://localhost:3000](http://localhost:3000)** in your browser.
+
+---
+
+## 🏆 The Solo Dev Factor: Engineering Challenges Solved
+
+<details>
+<summary><b>1. Cryptographic Tamper Pinpointing in (N)$</b></summary>
+<br />
+Implemented a continuous validation function that walks the chain forward from the genesis block, recomputing SHA-256 hashes against stored states and immediately surfacing the exact index and event ID where record corruption occurred.
+</details>
+
+<details>
+<summary><b>2. State-Aware Geo-Fenced Telemetry Intelligence</b></summary>
+<br />
+Built a dynamic natural language query engine that detects administrative boundaries (Odisha vs. West Bengal clusters) and filters medicine stock metrics, preventing cross-jurisdiction confusion during emergency shortages.
+</details>
+
+<details>
+<summary><b>3. Two-Tier Atomic Stock Redistribution</b></summary>
+<br />
+Designed paired transaction blocks (simultaneous source DISPENSE and target RECEIVE) linked to CDMO digital authorizations, preventing double-spending and unverified inventory inflation.
+</details>
+
+---
+
+<div align="center">
+  <sub>Built for resilient, tamper-evident public health administration.</sub>
+</div>
