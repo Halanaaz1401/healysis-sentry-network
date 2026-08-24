@@ -1,0 +1,23 @@
+# Secrets & API Keys
+.env
+*.env
+backend/.env
+frontend/.env.local
+
+# Python Environments
+.venv/
+env/
+__pycache__/
+*.pyc
+
+# Node & Next.js
+node_modules/
+frontend/.next/
+frontend/out/
+
+# Telemetry Ledger persistence (protect seeded csv from public git commit)
+backend/data/*.csv
+
+# OS metadata
+.DS_Store
+Thumbs.db
