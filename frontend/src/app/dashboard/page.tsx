@@ -4,7 +4,7 @@ import React, { useState, useEffect } from "react";
 import Link from "next/link";
 import { AppShell } from "@/components/AppShell";
 import { useAuth } from "@/context/AuthContext";
-import { API_BASE_URL } from "@/config";
+import { API_BASE_URL, getApiBaseUrl } from "@/config";
 import { 
   IconDatabase, 
   IconAlertOctagon, 
@@ -35,11 +35,12 @@ export default function DashboardPage() {
       setLoading(true);
       setError(null);
       const headers = getAuthHeaders();
+      const baseUrl = getApiBaseUrl();
 
       const [resAlerts, resForecasts, resRecs] = await Promise.all([
-        fetch(`${API_BASE_URL}/api/v1/alerts`, { headers }),
-        fetch(`${API_BASE_URL}/api/v1/forecasts`, { headers }),
-        fetch(`${API_BASE_URL}/api/v1/recommendations`, { headers }),
+        fetch(`${baseUrl}/api/v1/alerts`, { headers }),
+        fetch(`${baseUrl}/api/v1/forecasts`, { headers }),
+        fetch(`${baseUrl}/api/v1/recommendations`, { headers }),
       ]);
 
       const errors: string[] = [];

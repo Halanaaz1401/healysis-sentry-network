@@ -1,4 +1,4 @@
-import { API_BASE_URL, UserIdentity, MOCK_USERS } from "@/config";
+import { API_BASE_URL, getApiBaseUrl, UserIdentity, MOCK_USERS } from "@/config";
 
 export interface ApiOptions extends RequestInit {
   headers?: Record<string, string>;
@@ -39,7 +39,8 @@ export async function apiFetch<T = any>(endpoint: string, options: ApiOptions = 
   };
 
   const cleanEndpoint = endpoint.startsWith("/") ? endpoint : `/${endpoint}`;
-  const url = endpoint.startsWith("http") ? endpoint : `${API_BASE_URL}${cleanEndpoint}`;
+  const baseUrl = getApiBaseUrl();
+  const url = endpoint.startsWith("http") ? endpoint : `${baseUrl}${cleanEndpoint}`;
 
   const response = await fetch(url, {
     ...options,
