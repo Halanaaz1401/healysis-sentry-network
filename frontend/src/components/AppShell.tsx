@@ -19,7 +19,9 @@ import {
   IconLock,
   IconShieldCheck,
   IconUser,
-  IconKey
+  IconKey,
+  IconClipboardList,
+  IconAlertOctagon
 } from "@tabler/icons-react";
 
 export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -67,6 +69,7 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
         { label: "Facilities", href: "/facilities", icon: IconBuildingHospital },
         { label: "Resources", href: "/resources", icon: IconReportMedical },
         { label: "Forecasts & Risk", href: "/forecasts", icon: IconTrendingUp },
+        { label: "Alerts", href: "/alerts", icon: IconAlertOctagon },
       ]
     },
     {
@@ -79,6 +82,7 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
       group: "INTELLIGENCE",
       items: [
         { label: "AI Advisor", href: "/advisor", icon: IconSparkles },
+        { label: "Audit Ledger", href: "/audit", icon: IconClipboardList },
       ]
     }
   ];

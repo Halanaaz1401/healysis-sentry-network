@@ -6,3 +6,12 @@ node_modules/
 .next/
 __pycache__/
 backend/__pycache__/
+*.db
+*.sqlite3
+.pytest_cache/
+.venv/
+.idea/
+*.tsbuildinfo
+*.pyc
+.DS_Store
+Thumbs.db

@@ -13,7 +13,7 @@ from dotenv import load_dotenv
 
 from app.config import settings
 from app.database import get_db
-from app.routers import auth, forecasts, alerts, recommendations, advisor, facilities, resources
+from app.routers import auth, forecasts, alerts, recommendations, advisor, facilities, resources, audit
 
 BASE_DIR = pathlib.Path(__file__).resolve().parent
 load_dotenv(dotenv_path=BASE_DIR / ".env", override=True)
@@ -24,11 +24,14 @@ from contextlib import asynccontextmanager
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    try:
-        from seed_db import seed_database
-        seed_database()
-    except Exception as e:
-        logger.warning(f"Startup database seeding note: {e}")
+    # Only seed database automatically in development/demo mode, never in production unless explicitly requested
+    auto_seed = os.getenv("AUTO_SEED", "false" if settings.APP_ENV == "production" else "true").lower() == "true"
+    if auto_seed:
+        try:
+            from seed_db import seed_database
+            seed_database()
+        except Exception as e:
+            logger.warning(f"Startup database seeding note: {e}")
     yield
 
 # Configure FastAPI application with conditional OpenAPI documentation
@@ -151,6 +154,7 @@ app.include_router(forecasts.router)
 app.include_router(alerts.router)
 app.include_router(recommendations.router)
 app.include_router(advisor.router)
+app.include_router(audit.router)
 
 @app.get("/")
 def health_check(request: Request):

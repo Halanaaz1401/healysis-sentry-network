@@ -150,12 +150,15 @@ def action_recommendation(
     Submits human operational decision (APPROVE or REJECT) on candidate redistribution transfer.
     Requires CDMO or ADMIN role.
     On APPROVE:
-    1. Validates recommendation status is PENDING_HUMAN_APPROVAL.
-    2. Validates donor has sufficient stock.
-    3. Decreases donor stock and increases recipient stock.
-    4. Records approval actor and timestamp.
-    5. Emits tamper-evident AuditEvent.
-    6. Recalculates forecast & risk engine across affected nodes.
+    1. Validates recommended_quantity is positive.
+    2. Acquires a row-level lock on the recommendation to prevent race-condition double-approvals.
+    3. Validates recommendation status is PENDING_HUMAN_APPROVAL.
+    4. Validates donor inventory exists and has sufficient stock.
+    5. Locates or creates recipient inventory record.
+    6. Atomically decrements donor stock and increments recipient stock.
+    7. Records approval actor, role, and timestamp.
+    8. Emits tamper-evident SHA-256 AuditEvent and commits in a single transaction.
+    9. Recalculates forecast & risk engine across affected nodes (non-fatal if fails).
     """
     rec = db.query(Recommendation).filter(Recommendation.id == recommendation_id).first()
     if not rec:
@@ -178,81 +181,147 @@ def action_recommendation(
         )
 
     if action_upper == "APPROVE":
-        donor_inv = db.query(Inventory).filter(
-            Inventory.facility_id == rec.donor_facility_id,
-            Inventory.medicine_id == rec.medicine_id
-        ).first()
-
-        if not donor_inv or donor_inv.quantity < rec.recommended_quantity:
-            available_qty = donor_inv.quantity if donor_inv else 0
+        # ── Guard: quantity must be positive ────────────────────────────────────
+        if rec.recommended_quantity <= 0:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Donor facility lacks sufficient stock for transfer (Available: {available_qty}, Required: {rec.recommended_quantity})."
+                detail=f"Recommendation #{recommendation_id} has an invalid quantity ({rec.recommended_quantity}). Cannot approve a zero or negative transfer."
             )
 
-        recip_inv = db.query(Inventory).filter(
-            Inventory.facility_id == rec.recipient_facility_id,
-            Inventory.medicine_id == rec.medicine_id
-        ).first()
-
-        if not recip_inv:
-            med = db.query(Medicine).filter(Medicine.id == rec.medicine_id).first()
-            recip_inv = Inventory(
-                facility_id=rec.recipient_facility_id,
-                medicine_id=rec.medicine_id,
-                item_code=rec.item_code,
-                item_name=med.name if med else rec.item_code,
-                quantity=0,
-                safety_stock=40,
-                unit=med.unit if med else "units"
-            )
-            db.add(recip_inv)
-
-        # Atomic Stock Transfer
-        donor_inv.quantity -= rec.recommended_quantity
-        recip_inv.quantity += rec.recommended_quantity
-
-        rec.status = RecommendationStatus.APPROVED
-        rec.reviewed_by_user_id = current_user.id
-        rec.reviewed_at = datetime.now(timezone.utc)
-
-        # Audit Event Logging
-        last_event = db.query(AuditEvent).order_by(AuditEvent.id.desc()).first()
-        prev_hash = last_event.current_hash if last_event else "GENESIS_ROOT_HEALYSIS_000"
-
-        payload = {
-            "recommendation_id": rec.id,
-            "donor_facility_id": rec.donor_facility_id,
-            "recipient_facility_id": rec.recipient_facility_id,
-            "item_code": rec.item_code,
-            "quantity": rec.recommended_quantity,
-            "action": "REDISTRIBUTION_TRANSFER_APPROVED",
-            "reviewed_by_user_id": current_user.id
-        }
-        event_str = f"{prev_hash}|{rec.donor_facility_id}|{rec.recipient_facility_id}|{rec.item_code}|{rec.recommended_quantity}"
-        curr_hash = hashlib.sha256(event_str.encode("utf-8")).hexdigest()
-
-        audit_evt = AuditEvent(
-            event_id=f"EVT-TRANSFER-{uuid.uuid4().hex[:8].upper()}",
-            timestamp=datetime.now(timezone.utc),
-            actor_user_id=current_user.id,
-            action="REDISTRIBUTION_TRANSFER_APPROVED",
-            facility_id=rec.recipient_facility_id,
-            payload_json=payload,
-            previous_hash=prev_hash,
-            current_hash=curr_hash,
-            event_type=EventType.TRANSACTION
+        # ── Re-fetch recommendation with a row-level lock to prevent race conditions ──
+        # Two simultaneous APPROVE requests must serialise here; the second will see
+        # the status has already changed and abort cleanly.
+        rec = (
+            db.query(Recommendation)
+            .filter(Recommendation.id == recommendation_id)
+            .with_for_update()
+            .first()
         )
-        db.add(audit_evt)
+        if rec is None or rec.status != RecommendationStatus.PENDING_HUMAN_APPROVAL:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Recommendation #{recommendation_id} is no longer pending. It may have been approved or rejected by another request."
+            )
 
-        # Recalculate Forecast & Risk Engine for both facilities
-        run_forecast_and_alert_engine(db)
+        try:
+            # ── Validate donor inventory ─────────────────────────────────────────
+            donor_inv = db.query(Inventory).filter(
+                Inventory.facility_id == rec.donor_facility_id,
+                Inventory.medicine_id == rec.medicine_id
+            ).first()
+
+            if donor_inv is None:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Donor inventory record not found for facility_id={rec.donor_facility_id}, medicine_id={rec.medicine_id}."
+                )
+
+            if donor_inv.quantity < rec.recommended_quantity:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=(
+                        f"Donor facility (id={rec.donor_facility_id}) has insufficient stock for transfer. "
+                        f"Available: {donor_inv.quantity}, Required: {rec.recommended_quantity}."
+                    )
+                )
+
+            # ── Locate or create recipient inventory ─────────────────────────────
+            recip_inv = db.query(Inventory).filter(
+                Inventory.facility_id == rec.recipient_facility_id,
+                Inventory.medicine_id == rec.medicine_id
+            ).first()
+
+            if not recip_inv:
+                med = db.query(Medicine).filter(Medicine.id == rec.medicine_id).first()
+                if not med:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Medicine record not found for medicine_id={rec.medicine_id}."
+                    )
+                recip_inv = Inventory(
+                    facility_id=rec.recipient_facility_id,
+                    medicine_id=rec.medicine_id,
+                    item_code=rec.item_code,
+                    item_name=med.name,
+                    quantity=0,
+                    safety_stock=40,
+                    incoming_quantity=0,
+                    unit=med.unit
+                )
+                db.add(recip_inv)
+                db.flush()  # Assign PK before using recip_inv below
+
+            # ── Atomic stock transfer ────────────────────────────────────────────
+            donor_inv.quantity -= rec.recommended_quantity
+            recip_inv.quantity += rec.recommended_quantity
+
+            # ── Record approval metadata ─────────────────────────────────────────
+            now_utc = datetime.now(timezone.utc)
+            rec.status = RecommendationStatus.APPROVED
+            rec.reviewed_by_user_id = current_user.id
+            rec.reviewed_at = now_utc
+
+            # ── Build SHA-256 audit ledger event ─────────────────────────────────
+            last_event = db.query(AuditEvent).order_by(AuditEvent.id.desc()).first()
+            prev_hash = last_event.current_hash if last_event else "GENESIS_ROOT_HEALYSIS_000"
+
+            payload = {
+                "recommendation_id": rec.id,
+                "recommendation_code": rec.recommendation_code,
+                "donor_facility_id": rec.donor_facility_id,
+                "recipient_facility_id": rec.recipient_facility_id,
+                "item_code": rec.item_code,
+                "quantity": rec.recommended_quantity,
+                "action": "REDISTRIBUTION_TRANSFER_APPROVED",
+                "reviewed_by_user_id": current_user.id,
+                "reviewed_by_role": current_user.role.value,
+            }
+            event_str = (
+                f"{prev_hash}|{rec.donor_facility_id}|{rec.recipient_facility_id}"
+                f"|{rec.item_code}|{rec.recommended_quantity}|{current_user.id}"
+            )
+            curr_hash = hashlib.sha256(event_str.encode("utf-8")).hexdigest()
+
+            audit_evt = AuditEvent(
+                event_id=f"EVT-TRANSFER-{uuid.uuid4().hex[:8].upper()}",
+                timestamp=now_utc,
+                actor_user_id=current_user.id,
+                action="REDISTRIBUTION_TRANSFER_APPROVED",
+                facility_id=rec.recipient_facility_id,
+                payload_json=payload,
+                previous_hash=prev_hash,
+                current_hash=curr_hash,
+                event_type=EventType.TRANSACTION,
+                is_tampered=False,
+            )
+            db.add(audit_evt)
+
+            # ── Commit atomic transfer + audit block ─────────────────────────────
+            db.commit()
+
+        except HTTPException:
+            db.rollback()
+            raise
+        except Exception as exc:
+            db.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Approval transaction failed and was rolled back: {str(exc)}"
+            )
+
+        # ── Recalculate forecasts & alerts for affected facilities ────────────────
+        # Run outside the try/except; the stock transfer is already committed.
+        # Failures here do NOT undo the approved transfer.
+        try:
+            run_forecast_and_alert_engine(db)
+        except Exception:
+            pass  # Non-fatal: forecast refresh failure does not invalidate the transfer
 
     elif action_upper == "REJECT":
         rec.status = RecommendationStatus.REJECTED
         rec.reviewed_by_user_id = current_user.id
         rec.reviewed_at = datetime.now(timezone.utc)
+        db.commit()
 
-    db.commit()
     db.refresh(rec)
     return _enrich_recommendation(rec, db)

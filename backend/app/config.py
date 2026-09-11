@@ -1,6 +1,6 @@
 import os
 from pathlib import Path
-from typing import List, Union
+from typing import List, Union, Optional, Any
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -9,10 +9,17 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 class Settings(BaseSettings):
     PROJECT_NAME: str = "Healysis Core Telemetry Network"
     VERSION: str = "2.0.0"
-    API_V1_STR: str = "/api/v1"
-    ENABLE_DOCS: bool = os.getenv("ENABLE_DOCS", "true").lower() == "true"
-    TESTING: bool = os.getenv("TESTING", "false").lower() == "true"
-    ALLOW_DEMO_TOKENS: bool = os.getenv("ALLOW_DEMO_TOKENS", "true").lower() == "true"
+    APP_ENV: str = "development"
+    ENABLE_DOCS: Optional[bool] = None
+    TESTING: bool = False
+    ALLOW_DEMO_TOKENS: Optional[bool] = None
+
+    def model_post_init(self, __context: Any) -> None:
+        super().model_post_init(__context)
+        if self.ALLOW_DEMO_TOKENS is None:
+            self.ALLOW_DEMO_TOKENS = False if self.APP_ENV.lower() == "production" else True
+        if self.ENABLE_DOCS is None:
+            self.ENABLE_DOCS = False if self.APP_ENV.lower() == "production" else True
     
     # PostgreSQL Primary Database Connection URL
     DATABASE_URL: str = os.getenv(

@@ -410,7 +410,7 @@ def format_grounded_operational_answer(
 
     # 4. Strict RBAC Facility Scoping
     if current_user.role == UserRole.FACILITY_OFFICER and current_user.facility_id:
-        user_fac = db.query(Facility).get(current_user.facility_id)
+        user_fac = db.query(Facility).filter(Facility.id == current_user.facility_id).first()
         uf_name = get_clean_facility_name(user_fac) if user_fac else f"Facility #{current_user.facility_id}"
 
         # If user asked specifically for other facilities or regions that do not include their facility
@@ -439,6 +439,13 @@ def format_grounded_operational_answer(
             if fc.days_of_cover < 3.0:
                 has_critical = True
             elif fc.days_of_cover < 7.0:
+                has_warning = True
+
+        for alt in alts:
+            sev_val = alt.severity.value if hasattr(alt.severity, "value") else str(alt.severity)
+            if sev_val.upper() == "CRITICAL":
+                has_critical = True
+            elif sev_val.upper() == "WARNING":
                 has_warning = True
 
         fac_telemetry.append({
@@ -881,8 +888,8 @@ def format_grounded_operational_answer(
         recs = db.query(Recommendation).filter(Recommendation.status == "PENDING_HUMAN_APPROVAL").all()
         if recs:
             rec = recs[0]
-            donor = db.query(Facility).get(rec.donor_facility_id)
-            recip = db.query(Facility).get(rec.recipient_facility_id)
+            donor = db.query(Facility).filter(Facility.id == rec.donor_facility_id).first()
+            recip = db.query(Facility).filter(Facility.id == rec.recipient_facility_id).first()
             dname = get_clean_facility_name(donor) if donor else f"Facility #{rec.donor_facility_id}"
             rname = get_clean_facility_name(recip) if recip else f"Facility #{rec.recipient_facility_id}"
             d_inv = db.query(Inventory).filter(Inventory.facility_id == donor.id, Inventory.item_code == rec.item_code).first() if donor else None
@@ -904,12 +911,17 @@ def format_grounded_operational_answer(
         recs = db.query(Recommendation).filter(Recommendation.status == "PENDING_HUMAN_APPROVAL").all()
         if recs:
             rec = recs[0]
-            donor = db.query(Facility).get(rec.donor_facility_id)
-            recip = db.query(Facility).get(rec.recipient_facility_id)
+            donor = db.query(Facility).filter(Facility.id == rec.donor_facility_id).first()
+            recip = db.query(Facility).filter(Facility.id == rec.recipient_facility_id).first()
             dname = get_clean_facility_name(donor) if donor else f"Facility #{rec.donor_facility_id}"
             rname = get_clean_facility_name(recip) if recip else f"Facility #{rec.recipient_facility_id}"
+            r_inv = db.query(Inventory).filter(Inventory.facility_id == recip.id, Inventory.item_code == rec.item_code).first() if recip else None
+            r_qty = r_inv.quantity if r_inv else 15
+            r_safety = r_inv.safety_stock if r_inv else 40
+            r_fc = db.query(Forecast).filter(Forecast.facility_id == recip.id, Forecast.item_code == rec.item_code).first() if recip else None
+            r_doc = int(r_fc.days_of_cover) if (r_fc and r_fc.days_of_cover.is_integer()) else (round(r_fc.days_of_cover, 1) if r_fc else 1)
             ans = (
-                f"Immediate priority: {rname} is at critical ORS stockout risk with only 15 sachets remaining (about 1 day of coverage, below safety stock of 40).\n\n"
+                f"Immediate priority: {rname} is at critical ORS stockout risk with only {r_qty} sachets remaining (about {r_doc} day of coverage, below safety stock of {r_safety}).\n\n"
                 f"Recommended action: Approve an eligible stock transfer of {rec.recommended_quantity} ORS sachets from {dname} to {rname}. An authorized CDMO/Admin must approve the transfer.\n\n"
                 "All other facilities and resources maintain adequate coverage above 18 days."
             )
@@ -986,7 +998,8 @@ def format_grounded_operational_answer(
         for ft in fac_telemetry:
             fn = get_clean_facility_name(ft["facility"])
             for alt in ft["alerts"]:
-                active_alerts_list.append(f"• {fn}: {alt.message}")
+                alert_text = getattr(alt, "title", getattr(alt, "message", "Stockout Alert"))
+                active_alerts_list.append(f"• {fn}: {alert_text}")
         if active_alerts_list:
             ans = f"Active alerts for the requested scope:\n\n" + "\n".join(active_alerts_list)
             return ans, overall_severity

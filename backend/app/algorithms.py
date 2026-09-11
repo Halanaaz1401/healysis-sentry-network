@@ -258,6 +258,29 @@ def run_forecast_and_alert_engine(db: Session, facility_id_filter: Optional[int]
 
                 generated_alerts.append(alert)
 
+            else:
+                # Severity is LOW (safe). Resolve any existing ACTIVE alert for this
+                # facility+item so that stale CRITICAL/WARNING alerts are not retained
+                # after a redistribution transfer raises stock above the safe threshold.
+                alert_code = f"ALT-{fac.facility_code}-{inv.item_code}"
+                existing_alert = db.query(Alert).filter(
+                    Alert.alert_code == alert_code,
+                    Alert.status == AlertStatus.ACTIVE,
+                ).first()
+                if existing_alert:
+                    existing_alert.status = AlertStatus.RESOLVED
+                    existing_alert.severity = AlertSeverity.LOW
+                    existing_alert.evidence_json = {
+                        "current_quantity": inv.quantity,
+                        "incoming_quantity": inv.incoming_quantity,
+                        "safety_stock": inv.safety_stock,
+                        "expected_daily_demand": expected_demand,
+                        "days_of_cover": doc,
+                        "forecast_method": "EWMA + 7-Day Velocity (alpha=0.3)",
+                        "historical_days_evaluated": len(c_logs),
+                        "resolved_reason": "Stock level returned to safe threshold after redistribution or replenishment."
+                    }
+
     db.commit()
     return generated_forecasts, generated_alerts
 

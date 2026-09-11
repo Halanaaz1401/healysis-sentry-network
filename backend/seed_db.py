@@ -225,6 +225,8 @@ def seed_database():
 
         # Execute forecast, alert & redistribution engines to populate initial queue
         from app.algorithms import run_forecast_and_alert_engine, generate_and_persist_redistribution_recommendations
+        db.query(Recommendation).delete()
+        db.commit()
         run_forecast_and_alert_engine(db)
         generate_and_persist_redistribution_recommendations(db)
 
