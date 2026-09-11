@@ -5,398 +5,308 @@
 </p>
 
 <p align="center">
-  A production-ready healthcare operations platform for inventory visibility, demand forecasting, stockout early warning, cross-facility redistribution, and grounded Google Gemini assistance.
+  A healthcare operations platform for inventory visibility, demand forecasting, stockout early warning, cross-facility redistribution, human approval workflows, auditability, and grounded Google Gemini assistance.
 </p>
-
----
 
 <p align="center">
 
 ![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=for-the-badge&logo=python&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-005571?style=for-the-badge&logo=fastapi&logoColor=white)
-![Next.js 16](https://img.shields.io/badge/Next.js%2015-black?style=for-the-badge&logo=next.js&logoColor=white)
+![Next.js](https://img.shields.io/badge/Next.js%2016-black?style=for-the-badge&logo=next.js&logoColor=white)
+![React](https://img.shields.io/badge/React%2019-61DAFB?style=for-the-badge&logo=react&logoColor=black)
 ![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?style=for-the-badge&logo=typescript&logoColor=white)
-![Google Gemini](https://img.shields.io/badge/Google%20Gemini-2.5%20Flash-8E75C2?style=for-the-badge&logo=googlebard&logoColor=white)
-![Platform](https://img.shields.io/badge/Live%20Platform-healysis.ashlynxcyber.in-0ea5e9?style=for-the-badge&logo=googlechrome&logoColor=white)
-![Status](https://img.shields.io/badge/Status-Completed-brightgreen?style=for-the-badge)
+![Google Gemini](https://img.shields.io/badge/Google%20Gemini-2.5%20Flash-8E75C2?style=for-the-badge&logo=google&logoColor=white)
+![PostgreSQL](https://img.shields.io/badge/PostgreSQL-Primary-4169E1?style=for-the-badge&logo=postgresql&logoColor=white)
+![Status](https://img.shields.io/badge/Status-Live-brightgreen?style=for-the-badge)
 ![License](https://img.shields.io/badge/License-MIT-blue?style=for-the-badge)
-
-</p>
-
-<p align="center">
-
-![Cybersecurity](https://img.shields.io/badge/Cybersecurity-SHA--256%20Ledger-10b981?style=flat-square)
-![Threat Detection](https://img.shields.io/badge/Threat-Ghost%20Drawdowns-darkred?style=flat-square)
-![Incident Response](https://img.shields.io/badge/Forensic%20Triage-Gemini%20AI-blueviolet?style=flat-square)
-![Supply Chain](https://img.shields.io/badge/Supply%20Chain-Two--Tier%20CDMO-teal?style=flat-square)
-![Zero PII](https://img.shields.io/badge/Privacy-Zero--PII%20Tokens-blue?style=flat-square)
-![Geo-Fencing](https://img.shields.io/badge/Geo--Fencing-Odisha%20%26%20WB-green?style=flat-square)
 
 </p>
 
 ---
 
-## Overview
+## 📌 Overview
 
-Healthcare facilities can face medicine shortages even when useful stock exists elsewhere in the network. Current stock alone is not enough: administrators need visibility into demand, safety stock, days of cover, projected stockout dates, facility risk, and redistribution options.
+Healthcare facilities can face medicine shortages even when usable stock exists elsewhere in the network. Current stock alone is not enough: health administrators need visibility into **demand, safety stock, days of cover, projected stockout dates, facility risk, alerts, and redistribution options**.
 
 **Healysis Sentry Network** provides a centralized operational intelligence layer for healthcare supply-chain resilience.
 
 The platform combines:
 
-- Real-time medicine inventory visibility
 - Facility and district-level operational data
+- Inventory and resource visibility
 - EWMA-based demand forecasting
-- Stockout-date estimation
-- Risk severity and early-warning alerts
+- Days-of-cover and projected stockout calculations
+- Deterministic stockout-risk classification
+- Early-warning alerts
 - Cross-facility redistribution recommendations
-- Human-approved stock transfer workflows
+- Mandatory human approval for physical stock transfers
 - Firebase authentication and server-side RBAC
 - Audit logging and operational traceability
-- Google Gemini-powered AI assistance
+- Google Gemini-powered grounded AI assistance
 
-> **Core principle: deterministic healthcare calculations establish the operational state; Gemini explains that state in natural language.**
-## Repository Highlights
+> **Core principle:** deterministic backend calculations establish the operational state; Gemini explains verified operational data in natural language.
 
-✔ Google Gemini-powered grounded AI Advisor  
-✔ EWMA demand forecasting and stockout-risk prediction  
-✔ Real-time facility and medicine inventory visibility  
-✔ Cross-district redistribution recommendations  
-✔ Human-in-the-loop approval workflow  
-✔ Post-approval inventory, forecast, risk, and alert reconciliation  
-✔ Firebase authentication with server-side RBAC  
-✔ Audit logging for operational traceability  
-✔ PostgreSQL production architecture with local SQLite fallback  
-✔ Live production deployment
+---
 
+## 🎯 Problem
 
-## Key Features
+Primary healthcare networks can experience:
 
-### 📊 Dashboard
-Central operational view of facility status, inventory conditions, critical resources, forecasts, risk levels, alerts, and redistribution activity.
+- Uneven distribution of essential medicines across facilities
+- Limited visibility into which resources are approaching stockout
+- Reactive rather than forecast-driven replenishment
+- Difficulty identifying suitable donor facilities
+- Manual coordination of inter-facility transfers
+- Risk of acting on incomplete or unverified information
+- Weak traceability around operational decisions
 
-### 🏥 Facility Management
-Facility-level visibility including facility name/type, district/state, address, assigned officer, inventory, and operational context.
+Healysis addresses these problems by connecting **inventory → forecasting → risk detection → recommendation → human approval → inventory update → recalculation → audit** in one workflow.
 
-### 📦 Inventory & Resources
-Tracks SKU/item code, resource name, unit of measure, current stock, safety stock, daily demand, days of cover, projected stockout date, and risk severity.
+---
 
-### 📈 Forecasts & Risk
-Healysis uses **Exponentially Weighted Moving Average (EWMA)** forecasting to estimate demand trends.
+## 💡 Solution
+
+Healysis continuously represents the operational state of healthcare facilities and resources.
+
+For each resource, the system can track:
+
+| Signal | Purpose |
+|---|---|
+| Current stock | Available inventory |
+| Safety stock | Minimum operational buffer |
+| Daily demand | Consumption velocity |
+| Days of cover | Estimated remaining supply |
+| Projected stockout | Expected depletion date |
+| Risk severity | Safe / warning / critical state |
+| Alerts | Conditions requiring attention |
+| Redistribution options | Potential donor-to-recipient transfers |
+
+This allows a health administrator to move from **“What is happening?”** to **“What is likely to happen?”** and then to **“What action can be taken?”**
+
+---
+
+## ✨ Repository Highlights
+
+- ✅ Google Gemini-powered grounded AI Advisor
+- ✅ EWMA demand forecasting
+- ✅ Deterministic days-of-cover and stockout-risk calculations
+- ✅ Facility and resource inventory visibility
+- ✅ Early-warning alerts
+- ✅ Cross-facility redistribution recommendations
+- ✅ Mandatory human-in-the-loop approval
+- ✅ Post-approval inventory and forecast/risk reconciliation
+- ✅ Firebase authentication with server-side RBAC
+- ✅ Audit logging for operational traceability
+- ✅ PostgreSQL production architecture with local SQLite fallback
+- ✅ Production frontend and backend deployment
+
+---
+
+## 🧭 Table of Contents
+
+- [Overview](#-overview)
+- [Problem](#-problem)
+- [Solution](#-solution)
+- [Repository Highlights](#-repository-highlights)
+- [Key Features](#-key-features)
+- [Google Gemini AI](#-google-gemini-ai)
+- [End-to-End Workflow](#-end-to-end-workflow)
+- [Problem vs Solution](#-problem-vs-solution)
+- [System Architecture](#-system-architecture)
+- [India-Scale Design](#-india-scale-design)
+- [Product Screenshots](#-product-screenshots)
+- [Technology Stack](#-technology-stack)
+- [Security & Access Control](#-security--access-control)
+- [Quality Assurance](#-quality-assurance)
+- [Project Structure](#-project-structure)
+- [Project Status](#-project-status)
+- [Deployment](#-deployment)
+- [Installation](#-installation)
+- [Quick Start](#-quick-start)
+- [Configuration](#-configuration)
+- [Troubleshooting](#-troubleshooting)
+- [Future Enhancements](#-future-enhancements)
+- [License](#-license)
+- [Author](#-author)
+- [Acknowledgements](#-acknowledgements)
+
+---
+
+# 🚀 Key Features
+
+## 📊 Dashboard
+
+The dashboard provides a network-level operational view of:
+
+- Monitored facilities
+- Active alerts
+- Critical risks
+- Critical stockouts
+- Warning conditions
+- Pending rebalances
+- Early-warning resource conditions
+
+It gives administrators a quick starting point for deciding where attention is needed.
+
+---
+
+## 🏥 Facility Management
+
+Healysis models healthcare facilities across multiple districts and states.
+
+Each facility can expose:
+
+- Facility name
+- Facility type
+- District and state
+- Operational status
+- Assigned officer
+- Inventory context
+- Resource-level risk information
+
+The prototype includes healthcare nodes across **Odisha and West Bengal**.
+
+---
+
+## 📦 Inventory & Resources
+
+Resource records include operational fields such as:
+
+- SKU / item code
+- Resource name
+- Unit of measure
+- Current stock
+- Safety stock
+- Daily demand
+- Days of cover
+- Projected stockout date
+- Risk severity
+
+This creates the data foundation for forecasting, alerts, AI explanations, and redistribution recommendations.
+
+---
+
+## 📈 Demand Forecasting & Stockout Risk
+
+Healysis uses an **Exponentially Weighted Moving Average (EWMA)** approach to estimate demand velocity.
 
 ```text
 Historical Demand
        ↓
-EWMA Forecast
+EWMA Demand Estimate
        ↓
 Days of Cover
        ↓
-Projected Stockout
+Projected Stockout Date
        ↓
 Risk Classification
+       ↓
+Early Warning Alert
 ```
 
-### 🚨 Alerts
-Surfaces inventory conditions requiring operational attention and reconciles alert state when inventory changes.
+The forecasting layer provides deterministic operational values that downstream features can consume.
 
-### 🔄 Redistribution
-Generates potential stock-transfer recommendations between facilities.
+### Why EWMA?
+
+EWMA gives greater weight to more recent observations while retaining information from earlier observations. This makes it useful for a lightweight operational forecasting baseline where recent demand changes should influence the estimate.
+
+---
+
+## 🚨 Alerts
+
+The Early Warning Alerts view surfaces resources that require operational attention.
+
+The alert workflow connects:
 
 ```text
-Recommendation
-      ↓
+Current Inventory
+       ↓
+Demand / Forecast
+       ↓
+Days of Cover
+       ↓
+Risk Threshold
+       ↓
+Active Alert
+```
+
+When inventory changes after an approved transfer, Healysis reconciles the affected forecast, risk, and alert state.
+
+---
+
+## 🔄 Inter-Facility Redistribution
+
+Healysis can generate candidate redistribution recommendations between facilities.
+
+Example:
+
+```text
+Recipient Facility
+Low Stock / High Risk
+        ↓
+Candidate Donor Search
+        ↓
+Transfer Quantity Recommendation
+        ↓
 Authorized Human Review
-      ↓
+        ↓
 Approve / Reject
-      ↓
+        ↓
 Inventory Update
-      ↓
-Forecast & Risk Recalculation
-      ↓
+        ↓
+Forecast & Risk Refresh
+        ↓
 Audit Record
 ```
 
-AI does not independently execute physical stock transfers.
+### Mandatory Human Approval
 
-### 🤖 Google Gemini AI Advisor
-Answers operational questions using verified Healysis data. The backend resolves the facility, retrieves authorized telemetry, and supplies deterministic operational values to Gemini for explanation.
+Physical stock transfers are **not autonomous**.
 
-### 🔐 Authentication & RBAC
-Firebase authentication is combined with backend authorization. Roles include System Administrator, CDMO / Director, and Facility Officer. Facility-level access remains enforced server-side.
+The system explicitly maintains a human approval boundary:
 
+> **AI and deterministic engines recommend. Authorized healthcare personnel decide.**
 
-## Project Status
-
-| Area | Status |
-|---|---|
-| Core product | ✅ Completed |
-| End-to-end workflow | ✅ Completed |
-| Google Gemini integration | ✅ Completed |
-| Predictive forecasting | ✅ Completed |
-| Stockout risk & alerts | ✅ Completed |
-| Redistribution approval | ✅ Completed |
-| Firebase authentication / RBAC | ✅ Completed |
-| Security & regression QA | ✅ Completed |
-| GitHub repository | ✅ Published |
-| Live deployment | ✅ Live |
-| Demo video | ⏳ Submission asset |
-| Pitch deck | ⏳ Submission asset |
-| Final submission | ⏳ Pending |
-
-**Live Platform:** https://healysis.ashlynxcyber.in
-
-
-## Why This Project?
-
-Traditional healthcare supply chains rely on static, centralized databases or paper registers that can be trivially modified or backdated.
-
-Healysis introduces **mathematical trust and decentralized forensic accountability**. By anchoring every telemetry event in an immutable SHA-256 chain and evaluating live drawdowns using Gemini AI, district health directors can prevent medicine theft in real time rather than discovering stockouts months later during post-mortem audits.
+An authorized **CDMO/Director or System Administrator** can approve or reject eligible recommendations.
 
 ---
 
-## Table of Contents
+# 🤖 Google Gemini AI
 
-- [Overview](#overview)
-- [Repository Highlights](#repository-highlights)
-- [Key Features](#key-features)
-- [Project Status](#project-status)
-- [Why This Project?](#why-this-project)
-- [Problem vs. Solution](#problem-vs-solution)
-- [Project Architecture](#project-architecture)
-- [System Workflow](#system-workflow)
-- [Project Structure](#project-structure)
-- [Technology Stack](#technology-stack)
-- [Core Design Principles](#core-design-principles)
-- [Security Hardening](#security-hardening)
-- [Installation](#installation)
-- [Quick Start](#quick-start)
-- [Running the Complete System](#running-the-complete-system)
-- [Configuration](#configuration)
-- [Forensic AI Pipeline](#forensic-ai-pipeline)
-- [Two-Tier Rebalancing Engine](#two-tier-rebalancing-engine)
-- [Troubleshooting](#troubleshooting)
-- [Future Enhancements](#future-enhancements)
-- [License](#license)
-- [Author](#author)
-- [Acknowledgements](#acknowledgements)
+Healysis integrates **Google Gemini 2.5 Flash** as a grounded operational decision-support assistant.
 
----
-
-## Problem vs. Solution
-
-| Problem | Healysis Sentry Network Solution |
-|---|---|
-| Paper-based records with no audit trail | SHA-256 cryptographic ledger — every transaction is hashed and chained, retroactive edits mathematically break the chain |
-| Zero real-time inventory visibility | Live geo-fenced dashboard across facilities, districts, and states |
-| Medicine stockouts (ORS, Insulin, Paracetamol) | Real-time inventory math (`Base + Receive − Dispense − Spoilage`) with early-warning telemetry |
-| Cold-chain vaccine spoilage in ILR units | Spoilage batch tracking built into the ledger and rule engine |
-| Gray-market "ghost drawdowns" (high-volume draws vs. near-zero footfall) | `RULE_GHOST_DISPENSE` / `RULE_BULK_DEPLETION` anomaly rules + statistical footfall correlation |
-| No accountability for cross-facility stock transfers | Two-tier CDMO requisition desk with atomic dual-block dispatch, zero double-spending |
-| Manual, slow incident investigation | Gemini 2.5 Flash generates a structured 4-part forensic brief automatically on every flagged event |
-
----
-
-## Project Architecture
-
-The Healysis Sentry Network follows an asynchronous, event-driven architecture that separates raw telemetry ingestion, cryptographic block computation, rule sentry scoring, and neural forensic analysis.
-
-```mermaid
-flowchart LR
-
-A[Frontline PHC Transaction] --> B[Security Sanitizer & Rate Limiter]
-B --> C[SHA-256 Ledger Engine]
-C --> D[Rule Sentry Evaluator]
-D --> E{Integrity Violation?}
-E -->|No| F[Commit Verified Block]
-E -->|Yes| G[Flagged Incident Queue]
-G --> H[Gemini 2.5 Forensic Engine]
-G --> I[Deterministic Heuristic Fallback]
-H --> J[4-Part Forensic Brief]
-I --> J
-J --> K[Two-Tier Requisition Desk]
-K --> L[CDMO Director Authorization]
-L --> M[Atomic Dispatch Ledger Blocks]
-```
-
----
-
-## System Workflow
-
-```
-Frontline Telemetry Input (Facility, Action, SKU, Qty, Footfall, Token)
-        │
-        ▼
-Regex Sanitization & Sliding-Window Rate Limiter
-        │
-        ▼
-SHA-256 Previous Hash Linking (Hn = SHA256(Hn-1 + Payload))
-        │
-        ▼
-Rule Sentry Scoring Engine (Ghost Draw, Bulk Depletion, Spoilage)
-        │
-        ▼
-────────────────────────────────────────────────────────────
-Status: Verified (No Rules Triggered)
-────────────────────────────────────────────────────────────
-Appended to Ledger as VERIFIED Block
-
-────────────────────────────────────────────────────────────
-Status: Anomaly Flagged (Severity >= Medium)
-────────────────────────────────────────────────────────────
-        │
-        ▼
-Flagged Incident Queued in Cryptographic Ledger
-        │
-        ▼
-Google Gemini 2.5 Flash / Deterministic Fallback
-        │
-        ▼
-Structured 4-Part Forensic Audit Brief Generated
-        │
-        ▼
-CDMO Operational Directives & Verification Mandate
-        │
-        ▼
-One-Click Verifiable Audit PDF Exported
-        │
-        ▼
-Two-Tier Inter-Facility Requisition & Atomic Dispatch
-```
-
----
-
-## Project Structure
-
-```
-healysis-sentry-network/
-│
-├── backend/
-│   ├── data/
-│   │   └── phc_stock_events.csv      # Persistent SHA-256 transaction ledger
-│   ├── engine.py                     # Cryptographic hashing & rule evaluation
-│   ├── main.py                       # FastAPI application & Gemini integration
-│   ├── requirements.txt              # Python dependency definitions
-│   └── .env.example                  # Environment configuration template
-│
-├── frontend/
-│   ├── public/
-│   │   └── logo.png                  # Platform branding assets
-│   ├── src/
-│   │   └── app/
-│   │       ├── globals.css           # Tailwind CSS directives
-│   │       ├── layout.tsx            # Root layout wrapper
-│   │       └── page.tsx              # Complete clinical telemetry dashboard
-│   ├── package.json                  # Next.js and frontend dependencies
-│   ├── tailwind.config.ts            # Tailwind styling tokens
-│   └── tsconfig.json                 # TypeScript compiler configuration
-│
-├── .gitignore
-├── LICENSE
-└── README.md
-```
-
----
-
-## Technology Stack
-
-### Frontend Layer
-
-| Technology | Purpose |
-|---|---|
-| **Next.js 16 (App Router)** | Client interface & server-rendered routing |
-| **React 19** | Component-driven UI architecture |
-| **TypeScript** | Type-safe schema validation |
-| **Tailwind CSS** | Clinical dashboard styling |
-| **Tabler Icons React** | Vector iconography |
-
-### Backend & Security
-
-| Technology | Purpose |
-|---|---|
-| **Python 3.11+** | Backend engine execution |
-| **FastAPI** | Asynchronous RESTful telemetry endpoints |
-| **Pydantic V2** | Ingestion validation schemas |
-| **hashlib (SHA-256)** | Cryptographic hash chaining |
-| **Pandas** | Telemetry and historical data manipulation |
-| **Uvicorn** | High-performance ASGI server |
-
-### Artificial Intelligence & Telemetry
-
-| Technology | Purpose |
-|---|---|
-| **Google GenAI SDK** | Gemini 2.5 Flash API interface |
-| **Gemini 2.5 Flash** | Grounded healthcare operations assistant |
-| **Custom Sentry Heuristics** | Deterministic audit generation fallback |
-
----
-
-## Core Design Principles
-
-### Cryptographic Non-Repudiation
-
-Every transaction payload is hashed sequentially with the previous block's hash. Any retroactive modification breaks all subsequent hashes, immediately identifying tampering.
-
-### Two-Tier Administrative Safeguards
-
-Frontline nodes can never self-authorize inventory transfers. All rebalancing requires CDMO Director sign-off to prevent inventory double-spending.
-
-### Zero-Downtime Deterministic Fallbacks
-
-If external AI connectivity is unavailable, the internal heuristic baseline immediately generates a structured audit brief to avoid operational blind spots.
-
-### Privacy by Design (Zero-PII)
-
-Patient interactions are logged via tokenized encounter strings without storing Aadhaar numbers, phone numbers, or personal identifying data.
-
----
-
-## Security Hardening
-
-Healysis is built with a "hack-proof by design" posture across every layer of the stack:
-
-| Layer | Protection |
-|---|---|
-| **Cryptographic Immutability** | SHA-256 block-chaining (`H_n = SHA256(H_{n-1} + Payload)`) anchored to `GENESIS_ROOT_HEALYSIS_000`. Retroactive database row modification mathematically invalidates the entire subsequent chain. |
-| **SQLi & XSS Sanitization** | Deep regex filter inspecting all inbound payloads for classic attack patterns (`UNION SELECT`, `OR 1=1`, `<script>`, `onerror=`). |
-| **LLM Jailbreak & Prompt Injection Defense** | Dedicated sanitization layer neutralizing system prompt overrides, ignore-instruction vectors, and adversarial tokens before invoking the AI model. |
-| **Rate Limiting Sentinel** | Sliding-window memory rate limiter capping requests at 30 req/min per client IP to mitigate automated DDoS, scraping, and brute-force flooding. |
-| **Zero-PII Tokenization** | Patient privacy by design — anonymizes all transactions with encounter hashes (e.g., `PAT-IN-8921`), never storing identity data (Aadhaar, contact, name) on-chain. |
-| **Secret Boundary Isolation** | Environment variables and API keys strictly quarantined in isolated server environments, never compiled into client-side Next.js bundles or committed to git history. |
-
----
-
-## 🏆 Hackathon Alignment
-
-Healysis is built for the **Smart Health & Supply Chain Resilience** track.
-
-| Hackathon Requirement | Healysis Implementation |
-|---|---|
-| Functioning end-to-end prototype | Inventory → forecast → risk → redistribution → audit |
-| Mandatory Google AI | Google Gemini-powered AI Advisor |
-| Real / realistic data | Realistic healthcare facility and resource data |
-| Built for India | Multi-district, multi-state healthcare model |
-| Deployed prototype | Live production deployment |
-| Human-centered operation | Authorized human approval for redistribution |
-
-## 🧠 Google AI Architecture
+The AI Advisor is designed around a controlled pipeline:
 
 ```text
 User Question
-     ↓
-Intent / Facility Resolution
-     ↓
+      ↓
+Intent / Entity Resolution
+      ↓
 Authorization Check
-     ↓
+      ↓
 Verified Backend Retrieval
-     ↓
-Deterministic Inventory & Forecast Data
-     ↓
+      ↓
+Deterministic Inventory / Forecast Data
+      ↓
 Google Gemini
-     ↓
-Grounded Natural-Language Response
+      ↓
+Grounded Natural-Language Explanation
 ```
 
-### Grounding Rules
+## AI Advisor Capabilities
+
+The Advisor can answer operational questions such as:
+
+- Which facility currently has the highest stockout risk?
+- What resource is causing the risk?
+- How many days of cover remain?
+- Which facilities require redistribution?
+- Which facility has the lowest stock level for a resource?
+- What resources are forecast to reach stockout soon?
+- What is the likely operational impact of a projected shortage?
+- What action is recommended based on the current verified state?
+
+## Grounding Rules
 
 Gemini must not:
 
@@ -404,21 +314,30 @@ Gemini must not:
 - Invent forecast values
 - Invent facilities or resources
 - Bypass authorization
-- Approve redistribution
-- Expose secrets or authentication data
+- Approve a redistribution
+- Execute physical stock transfers
+- Expose API keys, credentials, tokens, or internal security data
 
-## 🔄 End-to-End Operational Flow
+**Numerical operational truth remains with the backend and deterministic calculations.**
+
+---
+
+# 🔗 End-to-End Workflow
+
+The complete operational path is:
 
 ```text
 Facility
    ↓
-Inventory & Demand
+Inventory & Resource State
    ↓
-Forecasting
+Demand Forecast
    ↓
-Stockout / Risk Detection
+Days of Cover
    ↓
-Alert
+Stockout Risk
+   ↓
+Early Warning Alert
    ↓
 Redistribution Recommendation
    ↓
@@ -430,293 +349,731 @@ Forecast Refresh
    ↓
 Risk Refresh
    ↓
-Audit
+Alert Reconciliation
+   ↓
+Audit Ledger
 ```
 
-## 🇮🇳 India-Scale Design
+This provides a functioning end-to-end healthcare resource resilience workflow rather than an isolated AI chatbot.
+
+---
+
+# ⚖️ Problem vs Solution
+
+| Problem | Healysis Solution |
+|---|---|
+| Limited visibility into distributed stock | Centralized facility and resource dashboard |
+| Static stock information does not show future risk | EWMA demand forecasting and days-of-cover calculations |
+| Stockouts discovered too late | Projected stockout dates and early-warning alerts |
+| Useful stock may exist at another facility | Inter-facility redistribution recommendations |
+| Automated transfers can create operational risk | Mandatory authorized human approval |
+| Decisions may rely on incomplete information | Grounded AI retrieval from verified backend data |
+| Inventory changes can make previous risk states stale | Post-transfer forecast, risk, and alert reconciliation |
+| Facility access needs to be controlled | Firebase authentication + server-side RBAC |
+| Operational actions need traceability | Audit logging |
+
+---
+
+# 🏗️ System Architecture
+
+```text
+                         ┌────────────────────────┐
+                         │      Next.js Web UI    │
+                         │   React + TypeScript   │
+                         └───────────┬────────────┘
+                                     │
+                                     ▼
+                         ┌────────────────────────┐
+                         │   Firebase Auth /      │
+                         │   Identity Context     │
+                         └───────────┬────────────┘
+                                     │
+                                     ▼
+                         ┌────────────────────────┐
+                         │    FastAPI Backend     │
+                         │   API + Authorization  │
+                         └───────────┬────────────┘
+                                     │
+              ┌──────────────────────┼──────────────────────┐
+              ▼                      ▼                      ▼
+      ┌───────────────┐      ┌──────────────┐      ┌───────────────┐
+      │     RBAC      │      │ PostgreSQL / │      │ Google Gemini │
+      │ Scope Checks  │      │ SQLite Local │      │ 2.5 Flash     │
+      └───────────────┘      └──────┬───────┘      └───────────────┘
+                                    │
+                                    ▼
+                         ┌────────────────────────┐
+                         │ Deterministic Engines  │
+                         │ Forecast / Risk /      │
+                         │ Alerts / Redistribution│
+                         └───────────┬────────────┘
+                                     │
+                                     ▼
+                         ┌────────────────────────┐
+                         │ Human Approval Boundary│
+                         └───────────┬────────────┘
+                                     │
+                                     ▼
+                         ┌────────────────────────┐
+                         │ Inventory + Forecast + │
+                         │ Risk + Audit Updates   │
+                         └────────────────────────┘
+```
+
+---
+
+# 🇮🇳 India-Scale Design
+
+Healysis uses a hierarchical operational model:
 
 ```text
 State
   ↓
 District
   ↓
-Facility
+Healthcare Facility
   ↓
-Resource
+Resource / SKU
   ↓
-Demand / Inventory Telemetry
+Demand & Inventory
+  ↓
+Forecast / Risk
+  ↓
+Operational Action
 ```
 
-The prototype demonstrates facilities across Odisha and West Bengal while keeping the core model extensible to additional states, districts, PHCs, CHCs, UPHCs, resource catalogs, and demand datasets.
+The prototype demonstrates facilities across **Odisha and West Bengal** while keeping the data model extensible to:
 
-## 📸 Product Screenshots
+- Additional states
+- Additional districts
+- PHCs
+- CHCs
+- UPHCs
+- Additional healthcare resources
+- Larger demand datasets
+- More facilities and administrative users
 
-Create `docs/screenshots/` and add the actual screenshots below.
+The architecture separates the frontend, API, database, authentication, and AI layers so the system can scale independently.
 
-### Dashboard
+---
 
-![Healysis Dashboard](docs/screenshots/dashboard.png)
+# 📸 Product Screenshots
 
-### Facilities
+The repository contains **9 product screenshots** covering the complete user experience.
 
-![Healysis Facilities](docs/screenshots/facilities.png)
+## Dashboard
 
-### Forecasts & Risk
+![Healysis Dashboard](docs/Screenshots/dashboard.png)
 
-![Healysis Forecasts and Risk](docs/screenshots/forecasts-risk.png)
+Network-level visibility into monitored facilities, active alerts, critical risks, stockouts, and pending rebalances.
 
-### AI Advisor
+---
 
-![Healysis AI Advisor](docs/screenshots/ai-advisor.png)
+## Facilities
 
-### Redistribution & Audit
+![Healysis Facilities](docs/Screenshots/facilities.png)
 
-![Healysis Redistribution and Audit](docs/screenshots/redistribution-audit.png)
+Facility-level operational visibility across Odisha and West Bengal, including location and risk status.
 
-> Five strong screenshots are enough. Prioritize Dashboard, Facilities, Forecasts & Risk, AI Advisor, and Redistribution/Audit.
+---
 
-## 🏗️ System Architecture
+## Forecasts & Risk
 
-```text
-                    ┌─────────────────────┐
-                    │    Next.js Web UI   │
-                    └──────────┬──────────┘
-                               │
-                    Firebase Authentication
-                               │
-                               ▼
-                    ┌─────────────────────┐
-                    │    FastAPI Backend   │
-                    └──────────┬──────────┘
-                               │
-              ┌────────────────┼────────────────┐
-              ▼                ▼                ▼
-        Authorization     PostgreSQL       Gemini AI
-              │                │                │
-              ▼                ▼                ▼
-          RBAC / Scope    Operational      Grounded
-                           Telemetry       Explanation
-                               │
-                               ▼
-                  Forecast / Risk / Alerts
-                               │
-                               ▼
-                     Redistribution
-                               │
-                               ▼
-                         Audit Trail
-```
+![Healysis Forecasts and Risk](docs/Screenshots/forecasts-risk.png)
 
-## 🧪 Quality Assurance
+Deterministic demand forecasting, current stock, daily demand, days of cover, projected stockout dates, and risk severity.
+
+---
+
+## Alerts
+
+![Healysis Alerts](docs/Screenshots/alerts.png)
+
+Early-warning view showing active stockout-risk alerts, affected facilities, resources, projected stockout dates, and operational actions.
+
+---
+
+## Redistribution
+
+![Healysis Redistribution](docs/Screenshots/redistribution.png)
+
+Inter-facility redistribution recommendation with donor/recipient context, transfer quantity, urgency, rationale, and mandatory human approval.
+
+---
+
+## Audit Ledger
+
+![Healysis Audit Ledger](docs/Screenshots/audit-ledger.png)
+
+Operational traceability for system actions and approved/rejected workflows.
+
+---
+
+## AI Advisor — Risk Analysis
+
+![Healysis AI Advisor](docs/Screenshots/ai advisor.png)
+
+Grounded Gemini assistance for identifying the highest-risk facility, affected resource, days of cover, and recommended operational action.
+
+---
+
+## AI Advisor — Inventory Analysis
+
+![Healysis AI Advisor Inventory Analysis](docs/Screenshots/ai advisor2.png)
+
+The Advisor can answer resource-level inventory questions using verified backend data.
+
+---
+
+## AI Advisor — Forecast Analysis
+
+![Healysis AI Advisor Forecast Analysis](docs/Screenshots/ai advisor3.png)
+
+The Advisor can interpret forecast and stockout-risk information while keeping deterministic numerical values as the source of truth.
+
+---
+
+# 🧰 Technology Stack
+
+## Frontend
+
+| Technology | Purpose |
+|---|---|
+| **Next.js 16.3.2** | Web application and routing |
+| **React 19** | Component-based UI |
+| **TypeScript** | Type-safe frontend development |
+| **Tailwind CSS v4** | Interface styling |
+| **Recharts** | Data visualization |
+| **Lucide / Tabler Icons** | Interface iconography |
+
+## Backend
+
+| Technology | Purpose |
+|---|---|
+| **Python 3.11+** | Backend runtime |
+| **FastAPI** | REST API |
+| **Uvicorn** | ASGI server |
+| **SQLAlchemy 2.0** | Database ORM |
+| **Alembic** | Database migrations |
+| **Pydantic v2** | Validation and schemas |
+| **SlowAPI** | API rate limiting |
+
+## Data
+
+| Technology | Purpose |
+|---|---|
+| **PostgreSQL** | Production database |
+| **SQLite** | Local development fallback |
+| **Realistic seeded data** | Demonstration healthcare network |
+
+## Authentication
+
+| Technology | Purpose |
+|---|---|
+| **Firebase Authentication** | User authentication |
+| **Firebase Admin SDK** | Server-side identity verification |
+| **Server-side RBAC** | Role and facility authorization |
+
+## AI
+
+| Technology | Purpose |
+|---|---|
+| **Google GenAI SDK** | Gemini API integration |
+| **Gemini 2.5 Flash** | Grounded operational AI Advisor |
+
+---
+
+# 🔐 Security & Access Control
+
+Healysis applies security controls at the backend boundary.
+
+## Authentication
+
+Firebase Authentication establishes the authenticated user identity.
+
+## Role-Based Access Control
+
+The platform supports:
+
+- **System Administrator**
+- **CDMO / Director**
+- **Facility Officer**
+
+Authorization is enforced server-side rather than relying on frontend visibility.
+
+## Human Approval Boundary
+
+Redistribution execution requires an authorized approval action. The AI Advisor cannot approve or execute a physical stock transfer.
+
+## Input Validation
+
+Backend schemas validate incoming API payloads before processing.
+
+## Rate Limiting
+
+API rate limiting is enabled for protection against excessive automated requests.
+
+## Secret Isolation
+
+Production credentials and API keys are supplied through environment variables and are not intended to be committed to source control or exposed in the browser.
+
+## Error Sanitization
+
+Internal implementation details and sensitive backend information are not intended to be returned through user-facing API errors.
+
+---
+
+# 🧪 Quality Assurance
 
 Healysis completed production-readiness and end-to-end QA.
 
-### Backend
+## Backend
 
 ```text
 168 / 168 tests passing
 ```
 
-### Frontend
+Validation included:
+
+- Authentication and RBAC
+- Authorization boundaries
+- Redistribution approval
+- Duplicate approval prevention
+- Inventory consistency
+- Forecast/risk recalculation
+- Alert reconciliation
+- AI grounding
+- Input validation
+- Security regression coverage
+
+## Frontend
 
 ```text
 Production build successful
 13 / 13 application routes validated
+TypeScript checks clean
+Lint checks clean
 ```
 
-Validation covered authentication, RBAC, authorization boundaries, redistribution approval, duplicate approval prevention, inventory consistency, forecast/risk refresh, alert reconciliation, AI grounding, input validation, and security regressions.
+## Post-Approval Consistency
 
-## 🧩 Design Principles
+After an approved transfer, the system validates consistency across:
 
-### AI Grounding
-Numerical operational truth comes from backend data and deterministic calculations.
-
-### Human-in-the-Loop
-AI recommends; authorized healthcare personnel decide.
-
-### Server-Side Authorization
-Frontend visibility is never treated as a security boundary.
-
-### Operational Consistency
-Approved transfers update inventory, forecasts, risk, and alerts consistently.
-
-### Production Separation
-Development and production configuration are separated, and secrets remain outside source control.
-
-## 🌍 Deployment
-
-**Live prototype:** https://healysis.ashlynxcyber.in
-
-The production architecture separates the frontend, backend API, database, authentication service, and Gemini integration so each layer can be scaled independently.
-
-## Installation
-
-### Prerequisites
-
-| Requirement | Version |
-|---|---|
-| **Node.js** | v18.18+ or v20+ |
-| **Python** | v3.10+ |
-| **pip** | Latest |
-| **Gemini API Key** | From [Google AI Studio](https://aistudio.google.com/) |
+```text
+Donor Stock
+      ↓
+Recipient Stock
+      ↓
+Forecast
+      ↓
+Days of Cover
+      ↓
+Projected Stockout
+      ↓
+Risk Severity
+      ↓
+Alerts
+      ↓
+Audit Record
+```
 
 ---
 
-## Quick Start
+# 📁 Project Structure
 
-### Step 1 — Clone the Repository
+```text
+healysis-sentry-network/
+│
+├── backend/
+│   ├── app/
+│   │   ├── ...
+│   │   └── ...
+│   ├── alembic/
+│   ├── tests/
+│   ├── requirements.txt
+│   ├── .env.example
+│   └── main.py
+│
+├── frontend/
+│   ├── public/
+│   ├── src/
+│   │   ├── app/
+│   │   ├── components/
+│   │   ├── lib/
+│   │   └── config.ts
+│   ├── package.json
+│   └── .env.example
+│
+├── docs/
+│   └── Screenshots/
+│       ├── dashboard.png
+│       ├── facilities.png
+│       ├── forecasts-risk.png
+│       ├── alerts.png
+│       ├── redistribution.png
+│       ├── audit-ledger.png
+│       ├── ai advisor.png
+│       ├── ai advisor2.png
+│       └── ai advisor3.png
+│
+├── .gitignore
+├── LICENSE
+└── README.md
+```
+
+> The structure above highlights the major application areas; individual implementation files may evolve as the project develops.
+
+---
+
+# 🏆 Hackathon Alignment
+
+Healysis is built for the **Smart Health & Supply Chain Resilience** track.
+
+| Hackathon Requirement | Healysis Implementation |
+|---|---|
+| Functioning end-to-end prototype | Inventory → Forecast → Risk → Alert → Redistribution → Human Approval → Audit |
+| Mandatory Google AI | Google Gemini-powered AI Advisor |
+| Real / realistic data | Realistic healthcare facility and resource dataset |
+| Built for India | Multi-district, multi-state model demonstrated across Odisha and West Bengal |
+| Deployable solution | Production frontend and backend deployment |
+| Human-centered operation | Authorized human approval for physical redistribution |
+| Scalable architecture | Separated frontend, API, database, authentication, and AI layers |
+
+---
+
+# 📊 Project Status
+
+| Area | Status |
+|---|---|
+| Core product | ✅ Completed |
+| Dashboard | ✅ Completed |
+| Facility management | ✅ Completed |
+| Inventory / resources | ✅ Completed |
+| EWMA forecasting | ✅ Completed |
+| Stockout risk & alerts | ✅ Completed |
+| Redistribution recommendations | ✅ Completed |
+| Human approval workflow | ✅ Completed |
+| Post-approval reconciliation | ✅ Completed |
+| Google Gemini integration | ✅ Completed |
+| Firebase authentication / RBAC | ✅ Completed |
+| Security & regression QA | ✅ Completed |
+| GitHub repository | ✅ Published |
+| Live deployment | ✅ Live |
+| Demo video | ⏳ Submission asset |
+| Pitch deck | ⏳ Submission asset |
+| Final submission | ⏳ Pending |
+
+---
+
+# 🌍 Deployment
+
+**Live prototype:** https://healysis.ashlynxcyber.in
+
+Production architecture:
+
+```text
+Browser
+  ↓
+Production Next.js Frontend
+  ↓
+FastAPI Backend
+  ↓
+PostgreSQL
+  ├── Inventory
+  ├── Facilities
+  ├── Forecasts
+  ├── Alerts
+  ├── Recommendations
+  └── Audit Data
+
+FastAPI
+  ↓
+Google Gemini
+  ↓
+Grounded AI Explanation
+```
+
+The frontend and backend are deployed separately, allowing the API and user interface to be maintained and scaled independently.
+
+---
+
+# 💻 Installation
+
+## Prerequisites
+
+| Requirement | Version |
+|---|---|
+| **Node.js** | 18.18+ or 20+ |
+| **Python** | 3.11+ recommended |
+| **pip** | Latest |
+| **PostgreSQL** | Production deployment |
+| **Gemini API Key** | Required for Gemini AI functionality |
+
+For Gemini credentials, use **Google AI Studio**.
+
+---
+
+# ⚡ Quick Start
+
+## Step 1 — Clone the Repository
 
 ```bash
 git clone https://github.com/Halanaaz1401/healysis-sentry-network.git
 cd healysis-sentry-network
 ```
 
-### Step 2 — Configure & Run Backend
+## Step 2 — Configure Backend
 
 ```bash
 cd backend
+
 python -m venv .venv
+```
 
-# On Windows:
+### Windows
+
+```bash
 .venv\Scripts\activate
-# On Linux/macOS:
-# source .venv/bin/activate
+```
 
+### Linux / macOS
+
+```bash
+source .venv/bin/activate
+```
+
+Install dependencies:
+
+```bash
 pip install -r requirements.txt
+```
 
-# Create environment file
-echo GEMINI_API_KEY="your_actual_gemini_api_key_here" > .env
+Create your local environment file from the supplied template:
 
-# Start FastAPI Engine (Port 8000)
+```text
+backend/.env.example
+```
+
+Then configure the required local values.
+
+Start the FastAPI backend:
+
+```bash
 uvicorn main:app --reload --port 8000
 ```
 
-### Step 3 — Launch Frontend Dashboard
+## Step 3 — Configure Frontend
+
+Open another terminal:
 
 ```bash
-# Open a separate terminal window:
 cd frontend
 npm install
+```
+
+Create the frontend environment file from:
+
+```text
+frontend/.env.example
+```
+
+For local development, the API base URL should point to the local backend.
+
+Start the frontend:
+
+```bash
 npm run dev
 ```
 
 ---
 
-## Running the Complete System
+# ⚙️ Configuration
 
-| Service | Port | Local Endpoint |
-|---|---|---|
-| **FastAPI Backend** | 8000 | `http://127.0.0.1:8000` |
-| **Next.js Dashboard** | 3000 | `http://localhost:3000` |
-| **API Documentation** | 8000 | `http://127.0.0.1:8000/docs` |
-| **Production Demo** | 443 | `https://healysis.ashlynxcyber.in` |
+Healysis separates configuration from source code.
+
+## Frontend
+
+The frontend uses:
+
+```text
+NEXT_PUBLIC_API_URL
+```
+
+For local development, this should point to the local FastAPI service.
+
+For production, it should point to the deployed backend API.
+
+## Backend
+
+The backend environment includes configuration for:
+
+```text
+APP_ENV
+PROJECT_NAME
+ENABLE_DOCS
+ALLOW_DEMO_TOKENS
+AUTO_SEED
+SECRET_KEY
+DATABASE_URL
+ALLOWED_ORIGINS
+GEMINI_API_KEY
+GEMINI_MODEL
+FIREBASE_PROJECT_ID
+FIREBASE_CREDENTIALS_FILE
+FIREBASE_CREDENTIALS_JSON
+```
+
+> Never commit real credentials, Firebase service-account data, Gemini API keys, database passwords, or production secrets.
+
+Use the supplied `.env.example` files as templates.
 
 ---
 
-## Configuration
+# 🩺 Operational Decision Model
 
-All backend secrets are isolated in a single environment file and never committed to git.
+Healysis deliberately separates **calculation** from **language generation**.
 
-**`backend/.env`**
-
+```text
+                 OPERATIONAL TRUTH
+                       │
+        ┌──────────────┼──────────────┐
+        ▼              ▼              ▼
+    Inventory      Forecast        Risk Rules
+        │              │              │
+        └──────────────┼──────────────┘
+                       ▼
+              Verified Backend State
+                       │
+                       ▼
+                  Google Gemini
+                       │
+                       ▼
+             Natural-Language Advice
 ```
-GEMINI_API_KEY=your_actual_gemini_api_key_here
-```
 
-- No quotes around the key value
-- No trailing whitespace after the key
-- `.env` is excluded via `.gitignore` — never commit real credentials
-- Use `backend/.env.example` as the template for new environments
+This design reduces the risk of an LLM generating unsupported operational numbers.
 
 ---
 
-## Forensic AI Pipeline
+# 🔄 Redistribution Decision Model
 
-When an anomaly is flagged, the system prompts **Gemini 2.5 Flash** with multi-variable parameters to produce an executive brief:
+The redistribution workflow follows a controlled sequence:
 
+```text
+Risk Detected
+     ↓
+Eligible Donor / Recipient Analysis
+     ↓
+Recommendation Generated
+     ↓
+Human CDMO/Admin Review
+     ↓
+       ┌───────────────┐
+       │               │
+    REJECT           APPROVE
+       │               │
+       ▼               ▼
+     Audit       Atomic Inventory Update
+                       │
+                       ▼
+                Forecast Recalculation
+                       │
+                       ▼
+                  Risk Refresh
+                       │
+                       ▼
+                 Alert Reconciliation
+                       │
+                       ▼
+                    Audit
 ```
-1. EXECUTIVE INCIDENT CLASSIFICATION
-   - Severity Rating (CRITICAL / HIGH / MEDIUM)
-   - Policy & Baseline Breaches
 
-2. FORENSIC EVIDENCE & STATISTICAL CORRELATION
-   - Quantity Drawdown vs. Registered Patient Footfall (>3σ deviation)
-   - Encounter Token Verification
-
-3. SUSPECTED ROOT CAUSE ANALYSIS
-   - Parallel Gray-Market Stock Diversion
-   - Unlogged Offline Emergency Dispensation
-   - ILR Cold-Chain Batch Spoilage
-
-4. CDMO OPERATIONAL DIRECTIVES
-   - Transaction Block Quarantine
-   - Block Medical Officer (BMO) Register Audit
-   - Inter-District Stock Rebalance Action
-```
-
-If the Gemini API is unreachable or rate-limited, the **deterministic heuristic fallback engine** generates an equivalent structured brief with zero downtime, and the full docket can be exported as a signed, printable PDF for district magistrates and health directors.
+The recommendation engine does not directly authorize the transfer.
 
 ---
 
-## Two-Tier Rebalancing Engine
+# 🛠️ Troubleshooting
 
-1. **Requisition Submission:** Remote clinic selects target item and submits an emergency request (`PENDING_APPROVAL`).
-2. **Director Review:** Requisition appears in the CDMO Central Hub console.
-3. **Atomic Execution:** On "Authorize & Dispatch", the backend commits two linked SHA-256 blocks:
-   - `DISPENSE` at source facility
-   - `RECEIVE` at target facility
+## Frontend cannot connect to backend
 
-This guarantees stock transfers are cryptographically balanced across nodes with zero inventory double-spending.
+Check that:
 
----
+1. The frontend API base URL is configured correctly.
+2. The deployed frontend points to the deployed FastAPI backend.
+3. The backend is running and reachable.
+4. The backend CORS configuration allows the production frontend origin.
+5. Production frontend environment variables were present **before the Next.js build**.
 
-## Troubleshooting
+For Next.js client-side variables such as `NEXT_PUBLIC_API_URL`, changing the variable requires a new frontend deployment/build.
 
-### Backend fails to connect to Gemini
+## Backend cannot connect to Gemini
 
-Ensure your `backend/.env` file contains `GEMINI_API_KEY=your_key` without quotes and has no trailing spaces.
+Check:
 
-### Ledger tampering alert appears
+- `GEMINI_API_KEY`
+- `GEMINI_MODEL`
+- Backend environment configuration
+- Network connectivity
+- API quota / availability
 
-Click **"Verify Hash Chain"** in the header. If testing manual tampering, inspect `phc_stock_events.csv` to ensure hashes match sequential outputs.
+Never place the Gemini API key in frontend code.
 
-### Port conflicts
+## Local port conflict
 
-If port 8000 or 3000 is in use:
+If port `8000` is already occupied, use another backend port:
 
 ```bash
 uvicorn main:app --reload --port 8080
-npm run dev -- -p 3001
 ```
 
----
-
-## Future Enhancements
-
-- **Hardware ILR Integration:** Direct IoT temperature sensor hooks for automated cold-chain excursion logging.
-- **Offline Mesh Sync:** Bluetooth/Wi-Fi Direct peer-to-peer ledger sync for remote areas without internet.
-- **Federated Zero-Knowledge Proofs (ZKPs):** Verifying multi-district quotas without disclosing clinic-specific patient counts.
+Then update the local frontend API URL accordingly.
 
 ---
 
-## License
+# 🔮 Future Enhancements
 
-This project is licensed under the **MIT License** - see the `LICENSE` file for details.
+Potential future extensions include:
+
+- Larger multi-state healthcare datasets
+- Additional forecasting models for comparison
+- Automated ingestion from public health supply-chain datasets
+- Offline-first synchronization for low-connectivity areas
+- Additional regional and language interfaces where required
+- Deeper facility-level analytics
+- Integration with additional healthcare information systems
+- Expanded geospatial optimization for redistribution
+
+These are future directions and are not required for the current prototype.
 
 ---
 
-## Author
+# 📄 License
+
+This project is licensed under the **MIT License**.
+
+See the `LICENSE` file for details.
+
+---
+
+# 👩‍💻 Author
 
 **Hala Naaz**
 
-Platform: [https://healysis.ashlynxcyber.in](https://healysis.ashlynxcyber.in)
+**Live Platform:** https://healysis.ashlynxcyber.in
 
-GitHub: [https://github.com/Halanaaz1401](https://github.com/Halanaaz1401)
+**GitHub:** https://github.com/Halanaaz1401
 
 ---
 
-## Acknowledgements
+# 🙏 Acknowledgements
 
-- **Google AI Studio** for Gemini 2.5 Flash developer access.
-- **FastAPI & Next.js Communities** for foundational open-source toolkits.
-- **Public Health Administrations** of Odisha and West Bengal for inspirational clinical telemetry workflows.
+- **Google AI / Google AI Studio** for Gemini developer access
+- **FastAPI** and **Next.js** communities for foundational open-source tooling
+- Public-health and healthcare supply-chain workflows that inspired the operational model
+
+---
+
+<p align="center">
+  <strong>Healysis Sentry Network</strong><br>
+  AI-assisted • Forecast-driven • Human-controlled • Built for healthcare resilience
+</p>
