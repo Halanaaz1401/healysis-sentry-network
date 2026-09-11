@@ -463,49 +463,49 @@ The repository contains **8 product screenshots** covering the complete user exp
 
 ### Dashboard
 
-![Healysis Dashboard](docs/Screenshots/dashboard.png.png)
+![Healysis Dashboard](docs/Screenshots/dashboard.png)
 
 Network-level visibility into monitored facilities, active alerts, critical risks, stockouts, and pending rebalances.
 
 ### Facilities
 
-![Healysis Facilities](docs/Screenshots/facilities.png.png)
+![Healysis Facilities](docs/Screenshots/facilities.png)
 
 Facility-level operational visibility across Odisha and West Bengal, including location and risk status.
 
 ### Forecasts & Risk
 
-![Healysis Forecasts and Risk](docs/Screenshots/forecasts-risk.png.png)
+![Healysis Forecasts and Risk](docs/Screenshots/forecasts-risk.png)
 
 Deterministic demand forecasting, current stock, daily demand, days of cover, projected stockout dates, and risk severity.
 
 ### AI Advisor — Risk Analysis
 
-![Healysis AI Advisor Risk Analysis](docs/Screenshots/ai%20advisor.png.png)
+![Healysis AI Advisor Risk Analysis](docs/Screenshots/ai%20advisor.png)
 
 Grounded Gemini assistance for identifying the highest-risk facility, affected resource, days of cover, and recommended operational action.
 
 ### AI Advisor — Inventory Analysis
 
-![Healysis AI Advisor Inventory Analysis](docs/Screenshots/ai%20advisor2.png.png)
+![Healysis AI Advisor Inventory Analysis](docs/Screenshots/ai%20advisor2.png)
 
 The Advisor can answer resource-level inventory questions using verified backend data.
 
 ### AI Advisor — Forecast Analysis
 
-![Healysis AI Advisor Forecast Analysis](docs/Screenshots/ai%20advisor3.png.png)
+![Healysis AI Advisor Forecast Analysis](docs/Screenshots/ai%20advisor3.png)
 
 The Advisor can interpret forecast and stockout-risk information while keeping deterministic numerical values as the source of truth.
 
 ### Alerts
 
-![Healysis Alerts](docs/Screenshots/alerts.png.png)
+![Healysis Alerts](docs/Screenshots/alerts.png)
 
 Early-warning stockout alerts showing severity, affected facility, resource, projected stockout date, and operational actions.
 
 ### Redistribution
 
-![Healysis Redistribution](docs/Screenshots/redistribution.png.png)
+![Healysis Redistribution](docs/Screenshots/redistribution.png)
 
 Human-approved inter-facility redistribution recommendations with donor/recipient stock, transfer quantity, urgency, and approval controls.
 
