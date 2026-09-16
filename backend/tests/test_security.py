@@ -66,9 +66,10 @@ def setup_security_data():
 
     # Users
     admin_user = User(firebase_uid="UID-ADMIN-SEC", email="admin.sec@healysis.gov.in", full_name="Admin Sec", role=UserRole.ADMIN, facility_id=None)
+    cdmo_user = User(firebase_uid="UID-CDMO-88", email="cdmo.sec@healysis.gov.in", full_name="CDMO Sec", role=UserRole.CDMO, facility_id=None)
     officer1 = User(firebase_uid="UID-OFFICER-SEC1", email="officer1.sec@healysis.gov.in", full_name="Officer 1", role=UserRole.FACILITY_OFFICER, facility_id=fac1.id)
     officer2 = User(firebase_uid="UID-OFFICER-SEC2", email="officer2.sec@healysis.gov.in", full_name="Officer 2", role=UserRole.FACILITY_OFFICER, facility_id=fac2.id)
-    db.add_all([admin_user, officer1, officer2])
+    db.add_all([admin_user, cdmo_user, officer1, officer2])
     db.commit()
     db.close()
 

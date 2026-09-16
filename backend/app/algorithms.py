@@ -182,18 +182,21 @@ def run_forecast_and_alert_engine(db: Session, facility_id_filter: Optional[int]
                 ConsumptionLog.date >= start_history_date
             ).order_by(ConsumptionLog.date.asc()).all()
 
-            v7 = calculate_7day_velocity(c_logs)
-            ewma = calculate_ewma_demand(c_logs)
-            
-            expected_demand = ewma if ewma > 0 else v7
-            doc = calculate_days_of_cover(inv.quantity, inv.incoming_quantity, expected_demand)
-            projected_stockout = calculate_projected_stockout_date(today, doc)
-            severity = classify_risk_severity(doc, inv.quantity, inv.safety_stock)
-
             forecast = db.query(Forecast).filter(
                 Forecast.facility_id == fac.id,
                 Forecast.medicine_id == inv.medicine_id
             ).first()
+
+            v7 = calculate_7day_velocity(c_logs)
+            ewma = calculate_ewma_demand(c_logs)
+            
+            expected_demand = ewma if ewma > 0 else v7
+            if expected_demand <= 0.0 and forecast and forecast.expected_daily_demand and forecast.expected_daily_demand > 0:
+                expected_demand = forecast.expected_daily_demand
+
+            doc = calculate_days_of_cover(inv.quantity, inv.incoming_quantity, expected_demand)
+            projected_stockout = calculate_projected_stockout_date(today, doc)
+            severity = classify_risk_severity(doc, inv.quantity, inv.safety_stock)
 
             if not forecast:
                 forecast = Forecast(

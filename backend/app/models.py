@@ -99,6 +99,7 @@ class User(Base):
 
     facility = relationship("Facility", back_populates="staff_members")
     audit_events = relationship("AuditEvent", back_populates="actor")
+    conversations = relationship("Conversation", back_populates="user", cascade="all, delete-orphan")
 
 
 class Facility(Base):
@@ -371,3 +372,35 @@ class AuditEvent(Base):
 
     actor = relationship("User", back_populates="audit_events")
     facility = relationship("Facility", back_populates="audit_events")
+
+
+class Conversation(Base):
+    """
+    AI Advisor Multi-Conversation Model
+    """
+    __tablename__ = "conversations"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    title = Column(String(255), nullable=False, default="New Chat")
+    created_at = Column(DateTime, default=utc_now, nullable=False)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now, nullable=False, index=True)
+
+    user = relationship("User", back_populates="conversations")
+    messages = relationship("Message", back_populates="conversation", cascade="all, delete-orphan", order_by="Message.created_at")
+
+
+class Message(Base):
+    """
+    AI Advisor Individual Message Record
+    """
+    __tablename__ = "messages"
+
+    id = Column(Integer, primary_key=True, index=True)
+    conversation_id = Column(Integer, ForeignKey("conversations.id", ondelete="CASCADE"), nullable=False, index=True)
+    sender = Column(String(32), nullable=False)  # 'user' or 'advisor'
+    text = Column(Text, nullable=False)
+    meta_json = Column(JSON, nullable=True)  # stores structured fields: summary, severity, recommended_actions, limitations, pending_update, update_result
+    created_at = Column(DateTime, default=utc_now, nullable=False, index=True)
+
+    conversation = relationship("Conversation", back_populates="messages")

@@ -1,7 +1,7 @@
 "use client";
 
 import React, { createContext, useContext, useState, useEffect } from "react";
-import { MOCK_USERS, UserIdentity } from "@/config";
+import { MOCK_USERS, UserIdentity, getApiBaseUrl } from "@/config";
 
 interface AuthContextType {
   user: UserIdentity | null;
@@ -17,23 +17,58 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [user, setUser] = useState<UserIdentity | null>(null);
   const [loading, setLoading] = useState(true);
 
+  const syncWithBackend = async (currentUser: UserIdentity) => {
+    try {
+      const baseUrl = getApiBaseUrl();
+      const token = currentUser.token.startsWith("Bearer ")
+        ? currentUser.token
+        : `Bearer ${currentUser.token}`;
+      const res = await fetch(`${baseUrl}/api/v1/auth/me`, {
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": token
+        }
+      });
+      if (res.ok) {
+        const profile = await res.json();
+        setUser((prev) => {
+          if (!prev || prev.firebase_uid !== profile.firebase_uid) return prev;
+          const updated: UserIdentity = {
+            ...prev,
+            firebase_uid: profile.firebase_uid,
+            email: profile.email,
+            full_name: profile.full_name,
+            role: profile.role,
+            facility_id: profile.facility_id
+          };
+          localStorage.setItem("healysis_user", JSON.stringify(updated));
+          return updated;
+        });
+      }
+    } catch (e) {
+      // Backend offline or unreachable during initial load; retain local state
+    }
+  };
+
   useEffect(() => {
+    let initialUser = MOCK_USERS[0];
     const saved = localStorage.getItem("healysis_user");
     if (saved) {
       try {
-        setUser(JSON.parse(saved));
+        initialUser = JSON.parse(saved);
       } catch (e) {
-        setUser(MOCK_USERS[0]);
+        initialUser = MOCK_USERS[0];
       }
-    } else {
-      setUser(MOCK_USERS[0]); // Default initial demo session to System Admin
     }
+    setUser(initialUser);
     setLoading(false);
+    syncWithBackend(initialUser);
   }, []);
 
   const login = (newUser: UserIdentity) => {
     setUser(newUser);
     localStorage.setItem("healysis_user", JSON.stringify(newUser));
+    syncWithBackend(newUser);
   };
 
   const logout = () => {

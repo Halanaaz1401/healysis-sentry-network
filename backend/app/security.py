@@ -84,24 +84,35 @@ def verify_firebase_token(authorization: Optional[str] = Header(None)) -> dict:
             "demo-token-officer-behala": "UID-OFFICER-BEHALA",
             "demo-token-officer-diamond": "UID-OFFICER-DIAMOND"
         }
+        demo_canonical_emails = {
+            "UID-ADMIN-99": "admin@healysis.gov.in",
+            "UID-CDMO-88": "cdmo.director@healysis.gov.in",
+            "UID-OFFICER-JATNI": "officer.jatni@healysis.gov.in",
+            "UID-OFFICER-MSDAS": "pharmacist.cuttack@healysis.gov.in",
+            "UID-OFFICER-PIPILI": "inventory.pipili@healysis.gov.in",
+            "UID-OFFICER-BEHALA": "nurse.behala@healysis.gov.in",
+            "UID-OFFICER-DIAMOND": "officer.diamond@healysis.gov.in",
+            "UID-ADMIN-SEC": "admin.sec@healysis.gov.in",
+            "UID-OFFICER-SEC1": "officer1.sec@healysis.gov.in",
+            "UID-OFFICER-SEC2": "officer2.sec@healysis.gov.in",
+        }
+
         if clean_token in demo_map:
             uid = demo_map[clean_token]
+            email = demo_canonical_emails.get(uid, f"{uid.lower()}@healysis.gov.in")
             return {
                 "uid": uid,
-                "email": f"{uid.lower()}@healysis.gov.in",
+                "email": email,
                 "firebase": {"sign_in_provider": "testing"}
             }
 
-        demo_uids = [
-            "UID-ADMIN-99", "UID-CDMO-88", "UID-OFFICER-JATNI", 
-            "UID-OFFICER-MSDAS", "UID-OFFICER-PIPILI", "UID-OFFICER-BEHALA", "UID-OFFICER-DIAMOND",
-            "UID-ADMIN-SEC", "UID-OFFICER-SEC1", "UID-OFFICER-SEC2"
-        ]
+        demo_uids = list(demo_canonical_emails.keys())
         if clean_token in demo_uids or token.startswith("TEST-TOKEN-") or token.startswith("UID-"):
             uid = clean_token
+            email = demo_canonical_emails.get(uid, f"{uid.lower()}@healysis.gov.in")
             return {
                 "uid": uid,
-                "email": f"{uid.lower()}@healysis.gov.in",
+                "email": email,
                 "firebase": {"sign_in_provider": "testing"}
             }
 
@@ -125,9 +136,21 @@ def verify_firebase_token(authorization: Optional[str] = Header(None)) -> dict:
         if settings.ALLOW_DEMO_TOKENS:
             clean_token = token.replace("TEST-TOKEN-", "").strip()
             if clean_token:
+                demo_canonical_emails = {
+                    "UID-ADMIN-99": "admin@healysis.gov.in",
+                    "UID-CDMO-88": "cdmo.director@healysis.gov.in",
+                    "UID-OFFICER-JATNI": "officer.jatni@healysis.gov.in",
+                    "UID-OFFICER-MSDAS": "pharmacist.cuttack@healysis.gov.in",
+                    "UID-OFFICER-PIPILI": "inventory.pipili@healysis.gov.in",
+                    "UID-OFFICER-BEHALA": "nurse.behala@healysis.gov.in",
+                    "UID-OFFICER-DIAMOND": "officer.diamond@healysis.gov.in",
+                    "UID-ADMIN-SEC": "admin.sec@healysis.gov.in",
+                    "UID-OFFICER-SEC1": "officer1.sec@healysis.gov.in",
+                    "UID-OFFICER-SEC2": "officer2.sec@healysis.gov.in",
+                }
                 return {
                     "uid": clean_token,
-                    "email": f"{clean_token.lower()}@healysis.gov.in",
+                    "email": demo_canonical_emails.get(clean_token, f"{clean_token.lower()}@healysis.gov.in"),
                     "firebase": {"sign_in_provider": "testing"}
                 }
 
@@ -143,7 +166,7 @@ def get_current_user(
 ) -> User:
     """
     FastAPI dependency mapping verified Firebase UID to database User record.
-    Enforces server-side user lookup.
+    Enforces server-side user lookup and secure identity binding.
     """
     firebase_uid = token_payload.get("uid")
     if not firebase_uid:
@@ -152,9 +175,22 @@ def get_current_user(
             detail="Token payload missing UID",
         )
 
+    token_email = token_payload.get("email")
+
+    # 1. Direct UID match
     user = db.query(User).filter(User.firebase_uid == firebase_uid).first()
+
+    # 2. Email-based identity binding for pre-registered users
+    if not user and token_email:
+        user = db.query(User).filter(User.email == token_email).first()
+        if user:
+            user.firebase_uid = firebase_uid
+            db.commit()
+            db.refresh(user)
+
+    # 3. Known legacy/demo UID alias mapping
+    alt_uid = None
     if not user:
-        # Check UID alias mapping between legacy and demo tokens
         aliases = {
             "demo-token-admin": "UID-ADMIN-99",
             "demo-token-cdmo": "UID-CDMO-88",
@@ -173,6 +209,27 @@ def get_current_user(
         alt_uid = aliases.get(firebase_uid)
         if alt_uid:
             user = db.query(User).filter(User.firebase_uid == alt_uid).first()
+
+    # 4. In development/testing/demo mode, if a verified demo UID is not yet registered in the active db,
+    # auto-seed the standard demo users so the environment self-heals without weakening RBAC.
+    if not user and (settings.ALLOW_DEMO_TOKENS or settings.TESTING):
+        known_demo_uids = {
+            "UID-ADMIN-99", "UID-CDMO-88", "UID-OFFICER-JATNI", "UID-OFFICER-MSDAS",
+            "UID-OFFICER-PIPILI", "UID-OFFICER-BEHALA", "UID-OFFICER-DIAMOND",
+            "UID-ADMIN-SEC", "UID-OFFICER-SEC1", "UID-OFFICER-SEC2"
+        }
+        if firebase_uid in known_demo_uids or (alt_uid and alt_uid in known_demo_uids):
+            try:
+                from seed_db import ensure_demo_users_seeded
+                ensure_demo_users_seeded(db)
+                user = db.query(User).filter(User.firebase_uid == firebase_uid).first()
+                if not user and alt_uid:
+                    user = db.query(User).filter(User.firebase_uid == alt_uid).first()
+                if not user and token_email:
+                    user = db.query(User).filter(User.email == token_email).first()
+            except Exception as e:
+                db.rollback()
+                logger.warning(f"Demo user auto-provisioning note: {e}")
 
     if not user:
         raise HTTPException(

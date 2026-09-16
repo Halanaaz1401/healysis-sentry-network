@@ -8,24 +8,72 @@ from app.database import Base, engine, SessionLocal
 from app.models import (
     Facility, User, Medicine, Inventory, ConsumptionLog, Bed, Personnel, 
     PersonnelAttendance, Forecast, Alert, Recommendation, Requisition, AuditEvent,
+    Conversation, Message,
     FacilityType, UserRole, MedicineCategory, ActionType, PersonnelRole, 
     AlertSeverity, AlertType, AlertStatus, UrgencyLevel, RecommendationStatus, 
     RequisitionStatus, EventType
 )
 
+def ensure_facilities_seeded(db):
+    """
+    Guarantees the foundational demo facilities exist in the database.
+    Idempotent: updates existing facilities or inserts missing ones.
+    """
+    facilities_data = [
+        {"code": "CHC-OD-KHU-001", "name": "Jatni CHC (Khordha)", "type": FacilityType.CHC, "state": "OD", "district": "Khordha", "lat": 20.165, "long": 85.705},
+        {"code": "UPHC-OD-CTC-002", "name": "UPHC MS Das (Kafla Bazar)", "type": FacilityType.UPHC, "state": "OD", "district": "Cuttack", "lat": 20.462, "long": 85.882},
+        {"code": "PHC-OD-PURI-004", "name": "Pipili PHC (Puri)", "type": FacilityType.PHC, "state": "OD", "district": "Puri", "lat": 20.117, "long": 85.833},
+        {"code": "UPHC-WB-KOL-012", "name": "Behala Urban PHC (Kolkata)", "type": FacilityType.UPHC, "state": "WB", "district": "Kolkata", "lat": 22.501, "long": 88.312},
+        {"code": "PHC-WB-S24P-008", "name": "Diamond Harbour PHC", "type": FacilityType.PHC, "state": "WB", "district": "South 24 Parganas", "lat": 22.193, "long": 88.188}
+    ]
+
+    facility_map = {}
+    for f in facilities_data:
+        fac = db.query(Facility).filter(Facility.facility_code == f["code"]).first()
+        if not fac:
+            fac = Facility(
+                facility_code=f["code"],
+                name=f["name"],
+                facility_type=f["type"],
+                state=f["state"],
+                district=f["district"],
+                latitude=f["lat"],
+                longitude=f["long"]
+            )
+            db.add(fac)
+            db.commit()
+            db.refresh(fac)
+        else:
+            fac.name = f["name"]
+            fac.facility_type = f["type"]
+            fac.state = f["state"]
+            fac.district = f["district"]
+            fac.latitude = f["lat"]
+            fac.longitude = f["long"]
+            db.commit()
+        facility_map[f["code"]] = fac
+    return facility_map
+
 def ensure_demo_users_seeded(db):
-    facilities = db.query(Facility).all()
-    if not facilities:
-        return
-    fac_ids = [f.id for f in facilities]
+    """
+    Guarantees the 7 core demo user identities exist in the database with their
+    designated roles and facility assignments.
+    """
+    fac_map = ensure_facilities_seeded(db)
+    fac_jatni = fac_map.get("CHC-OD-KHU-001")
+    fac_msdas = fac_map.get("UPHC-OD-CTC-002")
+    fac_pipili = fac_map.get("PHC-OD-PURI-004")
+    fac_behala = fac_map.get("UPHC-WB-KOL-012")
+    fac_diamond = fac_map.get("PHC-WB-S24P-008")
+
     users_data = [
         {"uid": "UID-ADMIN-99", "email": "admin@healysis.gov.in", "name": "System Admin", "role": UserRole.ADMIN, "facility_id": None},
         {"uid": "UID-CDMO-88", "email": "cdmo.director@healysis.gov.in", "name": "Dr. S. Mohanty", "role": UserRole.CDMO, "facility_id": None},
-        {"uid": "UID-OFFICER-JATNI", "email": "officer.jatni@healysis.gov.in", "name": "Dr. A. Nayak", "role": UserRole.FACILITY_OFFICER, "facility_id": fac_ids[0] if len(fac_ids) > 0 else None},
-        {"uid": "UID-OFFICER-MSDAS", "email": "pharmacist.cuttack@healysis.gov.in", "name": "S. Patra", "role": UserRole.FACILITY_OFFICER, "facility_id": fac_ids[1] if len(fac_ids) > 1 else None},
-        {"uid": "UID-OFFICER-PIPILI", "email": "inventory.pipili@healysis.gov.in", "name": "R. Mohanty", "role": UserRole.FACILITY_OFFICER, "facility_id": fac_ids[2] if len(fac_ids) > 2 else None},
-        {"uid": "UID-OFFICER-BEHALA", "email": "nurse.behala@healysis.gov.in", "name": "T. Banerjee", "role": UserRole.FACILITY_OFFICER, "facility_id": fac_ids[3] if len(fac_ids) > 3 else None},
-        {"uid": "UID-OFFICER-DIAMOND", "email": "officer.diamond@healysis.gov.in", "name": "K. Biswas", "role": UserRole.FACILITY_OFFICER, "facility_id": fac_ids[4] if len(fac_ids) > 4 else None},
+        {"uid": "UID-OFFICER-JATNI", "email": "officer.jatni@healysis.gov.in", "name": "Dr. A. Nayak", "role": UserRole.FACILITY_OFFICER, "facility_id": fac_jatni.id if fac_jatni else None},
+        {"uid": "UID-OFFICER-MSDAS", "email": "pharmacist.cuttack@healysis.gov.in", "name": "S. Patra", "role": UserRole.FACILITY_OFFICER, "facility_id": fac_msdas.id if fac_msdas else None},
+        {"uid": "UID-OFFICER-PIPILI", "email": "inventory.pipili@healysis.gov.in", "name": "R. Mohanty", "role": UserRole.FACILITY_OFFICER, "facility_id": fac_pipili.id if fac_pipili else None},
+        {"uid": "UID-OFFICER-BEHALA", "email": "nurse.behala@healysis.gov.in", "name": "T. Banerjee", "role": UserRole.FACILITY_OFFICER, "facility_id": fac_behala.id if fac_behala else None},
+        {"uid": "UID-OFFICER-DIAMOND", "email": "officer.diamond@healysis.gov.in", "name": "K. Biswas", "role": UserRole.FACILITY_OFFICER, "facility_id": fac_diamond.id if fac_diamond else None},
     ]
     for u in users_data:
         existing = db.query(User).filter(User.firebase_uid == u["uid"]).first()

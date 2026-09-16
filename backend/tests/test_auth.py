@@ -189,3 +189,156 @@ def test_cdmo_access_any_facility_success():
     res = client.get(f"/api/v1/auth/facility-scoped/{fac2.id}", headers={"Authorization": "Bearer TEST-TOKEN-UID-CDMO-88"})
     assert res.status_code == 200
     assert res.json()["facility_id"] == fac2.id
+
+
+# ==========================================
+# 8. Regression Tests: Firebase UID -> Healysis User Resolution
+# ==========================================
+def test_cdmo_user_resolution_and_profile():
+    """Verify UID-CDMO-88 resolves to verified CDMO user with correct role and global scope."""
+    res = client.get("/api/v1/auth/me", headers={"Authorization": "Bearer TEST-TOKEN-UID-CDMO-88"})
+    assert res.status_code == 200
+    data = res.json()
+    assert data["firebase_uid"] == "UID-CDMO-88"
+    assert data["role"] == "CDMO"
+    assert data["facility_id"] is None
+
+
+def test_facility_officer_user_resolution_and_profile():
+    """Verify UID-OFFICER-JATNI resolves to verified Facility Officer with facility-scoped access."""
+    # Ensure officer is seeded
+    db = TestingSessionLocal()
+    from seed_db import ensure_demo_users_seeded
+    ensure_demo_users_seeded(db)
+    db.close()
+
+    res = client.get("/api/v1/auth/me", headers={"Authorization": "Bearer TEST-TOKEN-UID-OFFICER-JATNI"})
+    assert res.status_code == 200
+    data = res.json()
+    assert data["firebase_uid"] == "UID-OFFICER-JATNI"
+    assert data["role"] == "FACILITY_OFFICER"
+    assert data["facility_id"] is not None
+
+
+def test_demo_user_self_healing_resolution_when_missing():
+    """Verify that if a registered demo UID is missing from active DB in dev/demo mode, it self-heals."""
+    db = TestingSessionLocal()
+    db.query(User).filter(User.firebase_uid == "UID-CDMO-88").delete()
+    db.commit()
+    # Confirm it was deleted
+    assert db.query(User).filter(User.firebase_uid == "UID-CDMO-88").first() is None
+    db.close()
+
+    # Request with demo token should trigger self-healing and succeed
+    res = client.get("/api/v1/auth/me", headers={"Authorization": "Bearer TEST-TOKEN-UID-CDMO-88"})
+    assert res.status_code == 200
+    data = res.json()
+    assert data["firebase_uid"] == "UID-CDMO-88"
+    assert data["role"] == "CDMO"
+
+
+def test_cdmo_can_access_protected_apis():
+    """Verify CDMO authenticated with UID-CDMO-88 can access alerts, forecasts, and recommendations without 401."""
+    cdmo_headers = {"Authorization": "Bearer TEST-TOKEN-UID-CDMO-88"}
+
+    res_alerts = client.get("/api/v1/alerts", headers=cdmo_headers)
+    assert res_alerts.status_code == 200
+
+    res_forecasts = client.get("/api/v1/forecasts", headers=cdmo_headers)
+    assert res_forecasts.status_code == 200
+
+    res_recs = client.get("/api/v1/recommendations", headers=cdmo_headers)
+    assert res_recs.status_code == 200
+
+
+def test_email_based_identity_reconciliation():
+    """Verify a pre-registered database user binds their Firebase UID upon first authenticated token."""
+    db = TestingSessionLocal()
+    pre_user = User(
+        firebase_uid="PENDING-FB-UID-BINDING",
+        email="new.specialist@healysis.gov.in",
+        full_name="New Specialist",
+        role=UserRole.FACILITY_OFFICER,
+        facility_id=1
+    )
+    db.add(pre_user)
+    db.commit()
+    db.close()
+
+    # Authenticated token arrives with new Firebase UID but matching verified email
+    new_uid = "UID-NEW-FIREBASE-SPEC"
+    token_headers = {"Authorization": f"Bearer TEST-TOKEN-{new_uid}"}
+
+    # First update verify_firebase_token mock behavior for this test: in security.py clean_token starting with UID- returns email
+    # Let's call /api/v1/auth/me
+    # To test email binding, pass a token where email matches pre_user.email
+    from app.security import verify_firebase_token
+    # Monkey-patch verify_firebase_token temporarily for this test
+    def mock_verify(authorization=None):
+        return {
+            "uid": new_uid,
+            "email": "new.specialist@healysis.gov.in",
+            "firebase": {"sign_in_provider": "password"}
+        }
+
+    from main import app
+    app.dependency_overrides[verify_firebase_token] = mock_verify
+    try:
+        res = client.get("/api/v1/auth/me", headers=token_headers)
+        assert res.status_code == 200
+        data = res.json()
+        assert data["firebase_uid"] == new_uid
+        assert data["email"] == "new.specialist@healysis.gov.in"
+        assert data["role"] == "FACILITY_OFFICER"
+
+        # Check DB was updated
+        db = TestingSessionLocal()
+        db_user = db.query(User).filter(User.firebase_uid == new_uid).first()
+        assert db_user is not None
+        assert db_user.email == "new.specialist@healysis.gov.in"
+        db.close()
+    finally:
+        app.dependency_overrides.pop(verify_firebase_token, None)
+
+
+def test_feature_2_1_confirm_update_requires_authenticated_user():
+    """Feature 2.1 confirm-update rejects unauthenticated or unknown UID requests."""
+    res_no_auth = client.post("/api/v1/advisor/confirm-update", json={
+        "confirmation_token": "dummy_token",
+        "facility_id": 1,
+        "item_code": "MED-ORS-SACHET",
+        "quantity": 180
+    })
+    assert res_no_auth.status_code == 401
+
+    res_unknown = client.post(
+        "/api/v1/advisor/confirm-update",
+        headers={"Authorization": "Bearer TEST-TOKEN-UNKNOWN-UID-999"},
+        json={
+            "confirmation_token": "dummy_token",
+            "facility_id": 1,
+            "item_code": "MED-ORS-SACHET",
+            "quantity": 180
+        }
+    )
+    assert res_unknown.status_code == 401
+    assert "Unknown Firebase user" in res_unknown.json()["detail"]
+
+
+def test_feature_2_1_confirm_update_rejects_cross_facility_access():
+    """Feature 2.1 confirm-update strictly enforces facility scoping for Facility Officers."""
+    officer_headers = {"Authorization": "Bearer TEST-TOKEN-UID-OFFICER-11"}
+    # Officer 11 is assigned to fac1 (id=1), attempting update on facility 2 (id=2)
+    res = client.post(
+        "/api/v1/advisor/confirm-update",
+        headers=officer_headers,
+        json={
+            "confirmation_token": "dummy_token",
+            "facility_id": 2,
+            "item_code": "MED-ORS-SACHET",
+            "quantity": 180
+        }
+    )
+    assert res.status_code == 403
+    assert "restricted to facility_id=" in res.json()["detail"]
+

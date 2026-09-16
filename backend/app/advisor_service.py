@@ -1,6 +1,8 @@
 import json
 import logging
 import re
+import hmac
+import hashlib
 from typing import Dict, Any, List, Optional, Tuple
 from sqlalchemy.orm import Session
 from google import genai
@@ -10,7 +12,7 @@ from app.models import (
     User, Facility, Inventory, Forecast, Alert, Recommendation, Medicine,
     UserRole, Bed, Personnel, AuditEvent
 )
-from app.schemas import AdvisorChatRequest, AdvisorChatResponse
+from app.schemas import AdvisorChatRequest, AdvisorChatResponse, PendingInventoryUpdate
 from app.advisor_tools import TOOL_MAP
 
 logger = logging.getLogger("healysis.advisor")
@@ -49,43 +51,81 @@ RESOURCE_CATALOG = [
         "code": "MED-ORS-SACHET",
         "name": "ORS",
         "unit": "sachets",
-        "aliases": ["ors", "oral rehydration", "rehydration salt", "rehydration salts"]
+        # Latin aliases (case-insensitive) + Devanagari + common transliterations
+        "aliases": [
+            "ors", "oral rehydration", "rehydration salt", "rehydration salts",
+            # Devanagari
+            "ओआरएस", "ओ.आर.एस",
+            # Common transliterations used in voice transcription
+            "o r s", "ors sachet", "ors sachets"
+        ]
     },
     {
         "code": "MED-PARACET-500MG",
         "name": "Paracetamol",
         "unit": "tablets",
-        "aliases": ["paracetamol", "pcm", "paracetamol 500mg"]
+        "aliases": [
+            "paracetamol", "pcm", "paracetamol 500mg",
+            # Devanagari
+            "पैरासिटामोल", "पेरासिटामोल", "पारासिटामोल",
+        ]
     },
     {
         "code": "MED-INSULIN-100IU",
         "name": "Insulin",
         "unit": "vials",
-        "aliases": ["insulin", "insulin 100iu"]
+        "aliases": [
+            "insulin", "insulin 100iu",
+            # Devanagari
+            "इन्सुलिन", "इंसुलिन",
+        ]
     },
     {
         "code": "MED-AMOXICILLIN-250",
         "name": "Amoxicillin",
         "unit": "capsules",
-        "aliases": ["amoxicillin", "amox", "amoxicillin 250mg"]
+        "aliases": [
+            "amoxicillin", "amox", "amoxicillin 250mg",
+            # Devanagari
+            "अमोक्सिसिलिन", "अमोक्सिसिलीन",
+        ]
     },
     {
         "code": "MED-CETIRIZINE-10",
         "name": "Cetirizine",
         "unit": "tablets",
-        "aliases": ["cetirizine", "cetrizine", "cetirizine 10mg"]
+        "aliases": [
+            "cetirizine", "cetrizine", "cetirizine 10mg",
+            # Devanagari
+            "सेटीरीज़ीन", "सेटीरिजीन",
+        ]
     },
     {
         "code": "MED-DEX-5PERCENT",
         "name": "Dextrose",
         "unit": "bottles",
-        "aliases": ["dextrose", "dextrose 5%"]
+        "aliases": [
+            "dextrose", "dextrose 5%",
+            # Devanagari
+            "डेक्सट्रोज",
+        ]
     }
 ]
 
+# All known Devanagari aliases flattened — used for substring search since
+# Devanagari tokens don't follow Latin word-boundary \b rules
+DEVANAGARI_ALIASES: dict = {}
+for _item in RESOURCE_CATALOG:
+    for _alias in _item["aliases"]:
+        # Detect Devanagari by Unicode range (U+0900–U+097F)
+        if any('\u0900' <= ch <= '\u097F' for ch in _alias):
+            DEVANAGARI_ALIASES[_alias] = _item
+
 UNSUPPORTED_RESOURCE_TOKENS = [
-    "covaxin", "covishield", "vaccine", "vaccines", "remdesivir", "morphine", 
-    "ppe", "ventilator", "azithromycin", "chloroquine", "ibuprofen"
+    "covaxin", "covishield", "vaccine", "vaccines", "remdesivir", "morphine",
+    "ppe", "ventilator", "azithromycin", "chloroquine", "ibuprofen",
+    # Devanagari unsupported tokens
+    "वायरस", "वाइरस", "वैक्सीन", "कोरोना", "कोविड"
 ]
 
 def get_genai_client() -> Optional[genai.Client]:
@@ -161,6 +201,58 @@ class StructuredQuery:
         self.requires_clarification: bool = False
         self.clarification_prompt: Optional[str] = None
 
+def _match_resources_in_text(text: str, text_lower: str) -> List[Dict[str, Any]]:
+    """
+    Matches resources from RESOURCE_CATALOG in both the original text and its lowercase.
+    Supports Latin aliases (word-boundary regex) and Devanagari aliases (substring).
+    Returns a list of matched resource dicts (deduplicated by code).
+    """
+    matched = []
+    seen_codes: set = set()
+
+    for item in RESOURCE_CATALOG:
+        for alias in item["aliases"]:
+            is_devanagari = any('\u0900' <= ch <= '\u097F' for ch in alias)
+            if is_devanagari:
+                # Devanagari: simple substring match in original text
+                if alias in text:
+                    if item["code"] not in seen_codes:
+                        matched.append(item)
+                        seen_codes.add(item["code"])
+                    break
+            else:
+                # Latin: word-boundary regex in lowercased text
+                if re.search(r'\b' + re.escape(alias) + r'\b', text_lower):
+                    if item["code"] not in seen_codes:
+                        matched.append(item)
+                        seen_codes.add(item["code"])
+                    break
+    return matched
+
+
+def _has_devanagari(text: str) -> bool:
+    """Returns True if the text contains any Devanagari Unicode characters."""
+    return any('\u0900' <= ch <= '\u097F' for ch in text)
+
+
+def _devanagari_unsupported_resource(text: str, msg_lower: str) -> Optional[str]:
+    """
+    Returns the Devanagari unsupported resource token found in text, or None.
+    Checks both the UNSUPPORTED_RESOURCE_TOKENS list (which now includes Devanagari tokens)
+    and attempts to detect Devanagari text that is NOT in any catalog alias.
+    """
+    # Check explicit unsupported tokens (including Devanagari ones)
+    for tok in UNSUPPORTED_RESOURCE_TOKENS:
+        is_dev = any('\u0900' <= ch <= '\u097F' for ch in tok)
+        if is_dev:
+            if tok in text:
+                return tok
+        else:
+            if re.search(r'\b' + re.escape(tok) + r'\b', msg_lower):
+                return tok.capitalize()
+    return None
+
+
 def interpret_user_query(user_msg: str, db: Session, current_user: User) -> StructuredQuery:
     sq = StructuredQuery()
     msg_lower = user_msg.lower().strip()
@@ -168,20 +260,22 @@ def interpret_user_query(user_msg: str, db: Session, current_user: User) -> Stru
     all_facs = db.query(Facility).all()
 
     # 1. Unresolved & Known Resource Extraction
-    for tok in UNSUPPORTED_RESOURCE_TOKENS:
-        if re.search(r'\b' + re.escape(tok) + r'\b', msg_lower):
-            sq.unresolved_resources.append(tok.capitalize())
-    
+    # Check for unsupported tokens (Latin and Devanagari)
+    unsupported_tok = _devanagari_unsupported_resource(user_msg, msg_lower)
+    if unsupported_tok:
+        sq.unresolved_resources.append(str(unsupported_tok))
+    else:
+        # Legacy fallback for Latin-only check
+        for tok in UNSUPPORTED_RESOURCE_TOKENS:
+            is_dev = any('\u0900' <= ch <= '\u097F' for ch in tok)
+            if not is_dev and re.search(r'\b' + re.escape(tok) + r'\b', msg_lower):
+                sq.unresolved_resources.append(tok.capitalize())
+
     # Generic "resource that does not exist" or "non_existent_*" pattern
     if "does not exist" in msg_lower or "non_existent" in msg_lower or "non-existent" in msg_lower:
         sq.unresolved_resources.append("that resource")
 
-    for item in RESOURCE_CATALOG:
-        for alias in item["aliases"]:
-            if re.search(r'\b' + re.escape(alias) + r'\b', msg_lower):
-                if item["code"] not in [r["code"] for r in sq.resource_scope]:
-                    sq.resource_scope.append(item)
-                break
+    sq.resource_scope = _match_resources_in_text(user_msg, msg_lower)
 
     # 2. Geographic Entity Extraction (State, District, Network)
     is_wb = bool(re.search(r'\b(west bengal|wb|bengal)\b', msg_lower))
@@ -215,29 +309,49 @@ def interpret_user_query(user_msg: str, db: Session, current_user: User) -> Stru
                 sq.geographic_scope = d_name
             break
 
-    # 3. Explicit Facility Alias Extraction
+    # 3. Explicit Facility Alias Extraction (Latin + Devanagari)
     explicit_matched_facs = []
     for fac in all_facs:
         name_lower = fac.name.lower()
         district_lower = fac.district.lower()
 
-        aliases = [name_lower, fac.facility_code.lower()]
+        latin_aliases = [name_lower, fac.facility_code.lower()]
         if "jatni" in name_lower:
-            aliases.extend(["jatni", "jatni chc"])
+            latin_aliases.extend(["jatni", "jatni chc"])
         if "ms das" in name_lower:
-            aliases.extend(["ms das", "kafla", "uphc ms das"])
+            latin_aliases.extend(["ms das", "kafla", "uphc ms das"])
         if "pipili" in name_lower or "puri" in district_lower:
-            aliases.extend(["pipli", "pipili", "pipli phc", "pipili phc"])
+            latin_aliases.extend(["pipli", "pipili", "pipli phc", "pipili phc"])
         if "behala" in name_lower:
-            aliases.extend(["behala", "behala urban", "behala phc", "behala urban phc"])
+            latin_aliases.extend(["behala", "behala urban", "behala phc", "behala urban phc"])
         if "diamond" in name_lower:
-            aliases.extend(["diamond", "diamond harbour", "diamond harbour phc"])
+            latin_aliases.extend(["diamond", "diamond harbour", "diamond harbour phc"])
 
-        for alias in aliases:
+        # Devanagari facility aliases for common facilities
+        devanagari_aliases: List[str] = []
+        if "jatni" in name_lower:
+            devanagari_aliases.extend(["जाटनी", "जटनी"])
+        if "ms das" in name_lower or "cuttack" in district_lower:
+            devanagari_aliases.extend(["कटक"])
+        if "pipili" in name_lower:
+            devanagari_aliases.extend(["पिपिली"])
+        if "behala" in name_lower:
+            devanagari_aliases.extend(["बेहाला"])
+        if "diamond" in name_lower:
+            devanagari_aliases.extend(["डायमंड हार्बर"])
+
+        matched = False
+        for alias in latin_aliases:
             if re.search(r'\b' + re.escape(alias) + r'\b', msg_lower):
-                if fac.id not in [f.id for f in explicit_matched_facs]:
-                    explicit_matched_facs.append(fac)
+                matched = True
                 break
+        if not matched:
+            for alias in devanagari_aliases:
+                if alias in user_msg:
+                    matched = True
+                    break
+        if matched and fac.id not in [f.id for f in explicit_matched_facs]:
+            explicit_matched_facs.append(fac)
 
     # Unresolved city/state check
     unresolved_places = ["siliguri", "bhubaneswar", "balasore", "sambalpur", "berhampur", "rourkela", "howrah", "durgapur", "delhi", "mumbai", "bihar", "punjab"]
@@ -256,9 +370,52 @@ def interpret_user_query(user_msg: str, db: Session, current_user: User) -> Stru
         sq.facility_scope = [f for f in all_facs if f.state.upper() == sq.state.upper()]
     elif is_all_network or "across" in msg_lower or "network" in msg_lower:
         sq.facility_scope = all_facs
+    elif current_user.role == UserRole.FACILITY_OFFICER and current_user.facility_id:
+        # Facility Officer with no explicit facility mention → scope to their assigned facility
+        user_fac = db.query(Facility).filter(Facility.id == current_user.facility_id).first()
+        sq.facility_scope = [user_fac] if user_fac else all_facs
     else:
-        # If no specific geography or facility mentioned
+        # CDMO/Admin with no explicit facility mention — broad scope
         sq.facility_scope = all_facs
+
+    # 4b. Unknown resource detection for query path
+    # If the message contains what looks like a resource mention but doesn't match anything in
+    # the catalog, and is not a known unsupported token, we should ask for clarification
+    # rather than silently dumping all monitored stock.
+    # This catches cases like "वायरस ka stock" that have no catalog match.
+    # 4b. Unknown resource detection for query path
+    # If the message mentions a resource-like token but doesn't match anything in the catalog,
+    # ask for clarification with catalog listing rather than silently dumping all monitored stock.
+    # Handles both Devanagari ("वायरस ka stock") and Latin ("virus ka stock", "stock of virus").
+    if not sq.unresolved_resources and not sq.resource_scope:
+        has_stock_keyword = "stock" in msg_lower or "स्टॉक" in user_msg or "स्टाक" in user_msg
+        has_query_word = any(k in msg_lower for k in ["kitna", "kitne", "how much", "how many", "kya", "status", "check", "कितना", "कितने"])
+
+        if _has_devanagari(user_msg) and (has_stock_keyword or has_query_word):
+            deva_words = re.findall(r'[\u0900-\u097F]+', user_msg)
+            grammar_and_fac_words = {
+                "का", "के", "की", "में", "है", "हैं", "था", "थी", "स्टॉक", "स्टाक",
+                "आज", "कितना", "कितने", "कितनी", "जाटनी", "पिपिली", "बेहाला", "डायमंड", "हारबर",
+                "क्या", "बताओ", "दिखाओ", "हॉस्पिटल", "अस्पताल"
+            }
+            unresolved_nouns = [w for w in deva_words if w not in grammar_and_fac_words]
+            if unresolved_nouns:
+                sq.unresolved_resources.append(unresolved_nouns[0])
+        elif has_stock_keyword or has_query_word:
+            # Latin: look for unknown noun before 'ka stock', 'stock', or after 'stock of'
+            m = re.search(r'\bstock\s+of\s+([a-zA-Z]+)\b', msg_lower)
+            if not m:
+                m = re.search(r'\b([a-zA-Z]+)\s+(?:ka\s+|ki\s+|ke\s+)?stock\b', msg_lower)
+            if m:
+                cand = m.group(1).strip()
+                stop_words = {
+                    "total", "monitored", "current", "the", "all", "our", "available", "my", "overall",
+                    "jatni", "pipili", "behala", "diamond", "harbour", "kolkata", "khordha", "puri", "south24",
+                    "mein", "me", "mai", "ka", "ki", "ke", "hai", "aaj", "kitna", "kitne", "kitni", "kya",
+                    "show", "tell", "check", "give", "display", "hospital", "chc", "phc", "uphc"
+                }
+                if cand not in stop_words and len(cand) >= 2:
+                    sq.unresolved_resources.append(cand)
 
     # 5. Intent and Answer Style Classification
     # A. Check Ambiguity first
@@ -364,19 +521,29 @@ def interpret_user_query(user_msg: str, db: Session, current_user: User) -> Stru
         return sq
 
     # M. Inventory Lookup
-    if len(explicit_matched_facs) == 1 and len(sq.resource_scope) == 1 and any(k in msg_lower for k in ["how much", "current", "stock at", "stock of", "what is the current"]):
+    # 1. Single resource specified -> DIRECT_RESOURCE (covers English, Hindi, Hinglish, Devanagari)
+    if len(sq.resource_scope) == 1:
         sq.intent = "DIRECT_RESOURCE"
         sq.answer_style = "DIRECT"
         return sq
-    elif len(explicit_matched_facs) == 1 and (len(sq.resource_scope) == 0 or "inventory status" in msg_lower or "medicines" in msg_lower):
+
+    # 2. Explicit single facility with no specific resource -> FACILITY_INVENTORY
+    if len(explicit_matched_facs) == 1 and (len(sq.resource_scope) == 0 or "inventory status" in msg_lower or "medicines" in msg_lower or "stock" in msg_lower or "स्टॉक" in user_msg):
         sq.intent = "FACILITY_INVENTORY"
         sq.answer_style = "SUMMARY"
         return sq
-    elif sq.geographic_scope or len(sq.facility_scope) > 1 or is_all_network or "across" in msg_lower:
+
+    # 3. Geographic / Network-wide inventory
+    if sq.geographic_scope or len(sq.facility_scope) > 1 or is_all_network or "across" in msg_lower or "all" in msg_lower or "monitored stock" in msg_lower:
         sq.intent = "GEOGRAPHIC_INVENTORY"
         sq.answer_style = "SUMMARY"
         return sq
-    elif any(k in msg_lower for k in ["how much", "what is", "what's", "summarize", "status"]):
+
+    # 4. General stock / inventory inquiry keywords (English, Hinglish, Hindi, Devanagari)
+    if any(k in msg_lower for k in [
+        "how much", "what is", "what's", "summarize", "status", "stock", "स्टॉक",
+        "inventory", "kitna", "kitne", "kitni", "कितना", "कितने", "कितनी", "batao", "bataiye"
+    ]):
         sq.intent = "DIRECT_RESOURCE" if len(sq.resource_scope) > 0 else "FACILITY_INVENTORY"
         sq.answer_style = "DIRECT" if len(sq.resource_scope) > 0 else "SUMMARY"
         return sq
@@ -394,10 +561,16 @@ def format_grounded_operational_answer(
     current_user: User,
     db: Session
 ) -> Tuple[str, str]:
-    # 1. Unresolved Resource Check
+    # 1. Unresolved Resource Check — return clarification with catalog listing, not all stock
     if query.unresolved_resources:
         res_str = ", ".join(query.unresolved_resources)
-        return f"Data is currently unavailable for {res_str} in the current Healysis dataset.", "SAFE"
+        catalog_names = ", ".join(item["name"] for item in RESOURCE_CATALOG)
+        return (
+            f"I couldn't match '{res_str}' to a resource in the verified Healysis medicine catalog. "
+            f"Did you mean one of: {catalog_names}? "
+            f"Please try again with the correct resource name.",
+            "SAFE"
+        )
 
     # 2. Unresolved Facility / Location Check
     if query.unresolved_facilities:
@@ -701,12 +874,30 @@ def format_grounded_operational_answer(
 
     # ==========================================
     # Handler: DIRECT_RESOURCE LOOKUP (Section 9 & 17 Concise Direct Answer)
+    # Grounded strictly to the requested resource. Does NOT return other medicines.
     # ==========================================
     if query.intent == "DIRECT_RESOURCE":
         res = query.resource_scope[0] if query.resource_scope else RESOURCE_CATALOG[2] # default insulin if none matched
         target_sku = res["code"]
         res_name = res["name"]
         res_unit = res["unit"]
+
+        if len(fac_telemetry) > 1:
+            # Scoped to only this resource across authorized facilities
+            lines = [f"{res_name} stock levels across authorized facilities:"]
+            worst_sev = "SAFE"
+            for ft in fac_telemetry:
+                fn = get_clean_facility_name(ft["facility"])
+                inv_item = next((i for i in ft["inventory"] if i.item_code == target_sku), None)
+                fc_item = next((c for c in ft["forecasts"] if c.item_code == target_sku), None)
+                item_qty = inv_item.quantity if inv_item else 0
+                item_doc = fc_item.days_of_cover if fc_item else 99.0
+                if item_doc < 3.0:
+                    worst_sev = "CRITICAL"
+                elif item_doc < 7.0 and worst_sev != "CRITICAL":
+                    worst_sev = "WARNING"
+                lines.append(f"• {fn}: {item_qty} {res_unit} ({item_doc:.1f} days of cover)")
+            return "\n".join(lines), worst_sev
 
         target = fac_telemetry[0] if fac_telemetry else None
         fname = get_clean_facility_name(target["facility"]) if target else "Pipili PHC"
@@ -717,7 +908,7 @@ def format_grounded_operational_answer(
         doc = fc.days_of_cover if fc else 99.0
         sev = "CRITICAL" if doc < 3.0 else ("WARNING" if doc < 7.0 else "SAFE")
 
-        ans = f"{fname} currently has {qty} {res_name.lower()} {res_unit}."
+        ans = f"{fname} currently has {qty} {res_name} {res_unit}."
         return ans, sev
 
     # ==========================================
@@ -1015,6 +1206,451 @@ def format_grounded_operational_answer(
     )
 
 # ==========================================
+# Frontline / Field Inventory Data Input (Feature 2.1)
+# ==========================================
+
+def generate_update_token(user_id: int, facility_id: int, item_code: str, quantity: int, demand: Optional[float]) -> str:
+    demand_str = f"{float(demand):.1f}" if demand is not None else "NONE"
+    payload = f"{user_id}:{facility_id}:{item_code}:{quantity}:{demand_str}"
+    sig = hmac.new(settings.SECRET_KEY.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).hexdigest()[:24]
+    return f"TOK-UPD-{sig}"
+
+def verify_update_token(token: str, user_id: int, facility_id: int, item_code: str, quantity: int, demand: Optional[float]) -> bool:
+    if not token or not token.startswith("TOK-UPD-"):
+        return False
+    expected = generate_update_token(user_id, facility_id, item_code, quantity, demand)
+    return hmac.compare_digest(token, expected)
+
+def handle_frontline_inventory_update_intent(
+    user_msg: str,
+    request_data: AdvisorChatRequest,
+    current_user: User,
+    db: Session
+) -> Optional[AdvisorChatResponse]:
+    """
+    Detects, validates, and prepares structured frontline inventory updates.
+    Returns None if the message is a normal informational query or question.
+    """
+    msg_clean = user_msg.strip()
+    msg_lower = msg_clean.lower()
+
+    # 0. Pure read-only query check: Questions starting with question words
+    # e.g. "What is the stock of ORS?", "Which facility has highest risk?", "Why is Jatni at risk?"
+    is_pure_question = bool(
+        re.search(r'^(?:what|which|why|how|where|when|who|check|compare|list|show|tell|explain|give)\b', msg_lower)
+        and not re.search(r'\b(?:kar\s*do|kardo|update|set|badha|ghata)\b', msg_lower)
+    ) or bool(
+        re.search(r'\b(?:kya|kitna|kitne|kitni|kyun|kahan|kisko)\b', msg_lower)
+        and not re.search(r'\b(?:kar\s*do|kardo|update|set)\b', msg_lower)
+    )
+    if is_pure_question:
+        return None
+
+    # 1. Determine if this message expresses an update intent
+    is_update_intent = False
+
+    # A. Negative numbers with stock / demand keywords or in Hinglish
+    has_negative = (
+        bool(re.search(r'(?:^|\s|:|=|stock|demand)-\s*\d+', msg_lower))
+        or "minus" in msg_lower
+        or "negative" in msg_lower
+    )
+    if has_negative and ("stock" in msg_lower or "demand" in msg_lower or "hai" in msg_lower or "unit" in msg_lower):
+        is_update_intent = True
+
+    # B. Explicit update verbs / commands
+    if re.search(r'\b(?:kar\s*do|kardo|set|update|badhao|ghatao|badha\s*do|entry\s+karo)\b', msg_lower):
+        is_update_intent = True
+
+    # C. Hinglish stock statements: "ka stock <num>", "stock <num> hai", "aaj <item> ka stock <num>"
+    if re.search(r'\b(?:ka|ke)\s+stock\b', msg_lower) or re.search(r'\bstock\s+\d+\s+hai\b', msg_lower):
+        is_update_intent = True
+
+    # D. English stock statements: "stock is <num>", "stock = <num>", "stock to <num>", "<item> stock is <num>"
+    if re.search(r'\bstock\s+(?:is|=|to|:)\s*\d+\b', msg_lower) or re.search(r'\b(?:daily\s+)?demand\s+(?:is|=|to|:)\s*\d+\b', msg_lower):
+        is_update_intent = True
+
+    # E. Units attached to numbers: e.g. "180 units", "320 and daily demand 35"
+    if re.search(r'\b\d+\s+(?:units?|sachets?|tablets?|vials?|bottles?|capsules?)\b', msg_lower):
+        is_update_intent = True
+
+    # F. Statement like "Aaj ORS ka stock 180 hai" or "Jatni mein ORS 180 hai" or "ORS 180 hai"
+    if re.search(r'\b(?:mein|me)\s+.*?\b\d+\s+hai\b', msg_lower):
+        is_update_intent = True
+
+    # G. Resource + quantity + hai: e.g. "ORS 180 hai" (Latin aliases)
+    has_med_token = any(
+        re.search(r'\b' + re.escape(alias) + r'\b', msg_lower)
+        for item in RESOURCE_CATALOG
+        for alias in item["aliases"]
+        if not any('\u0900' <= ch <= '\u097F' for ch in alias)  # Latin only for regex
+    )
+    # G2. Devanagari resource + quantity + Devanagari stock keyword
+    has_devanagari_med_token = any(
+        alias in user_msg
+        for item in RESOURCE_CATALOG
+        for alias in item["aliases"]
+        if any('\u0900' <= ch <= '\u097F' for ch in alias)
+    )
+    if has_med_token and re.search(r'\b\d+\b', msg_lower) and "hai" in msg_lower:
+        is_update_intent = True
+
+    if "stock" in msg_lower and re.search(r'\b\d+\b', msg_lower):
+        is_update_intent = True
+
+    # G3. Devanagari stock update: "स्टॉक 200 है" / "ओआरएस का स्टॉक 200 है"
+    if "स्टॉक" in user_msg or "स्टाक" in user_msg:
+        if re.search(r'\d+', user_msg):
+            is_update_intent = True
+
+    # G4. Devanagari resource + number + "है" (update intent)
+    if has_devanagari_med_token and re.search(r'\d+', user_msg) and "है" in user_msg:
+        is_update_intent = True
+
+    # H. Missing resource pattern: "Stock 180 hai", "Stock is 180"
+    if re.search(r'^(?:aaj\s+)?stock\s+(?:is\s+)?-?\d+(?:\s+hai)?(?:\s+units?)?\.?$', msg_lower):
+        is_update_intent = True
+
+    # I. Unknown medicine pattern: "XYZ medicine ka stock 100 hai"
+    if re.search(r'\b[a-zA-Z0-9_\-]+\s+medicine\b', msg_lower) and "stock" in msg_lower:
+        is_update_intent = True
+
+    if not is_update_intent:
+        return None
+
+    # 2. Reject negative numbers
+    if has_negative:
+        return AdvisorChatResponse(
+            answer="Invalid update value: Stock quantity and daily demand cannot be negative numbers. Please provide a valid non-negative integer.",
+            summary="Rejected negative numeric value for inventory update.",
+            severity="SAFE",
+            evidence=[],
+            data_sources=[],
+            recommended_actions=["Provide a non-negative integer for stock quantity."],
+            limitations="Validation error: Frontline data updates reject negative quantities.",
+            requires_human_approval=False
+        )
+
+    # 3. Extract quantity
+    quantity = None
+    m_qty = re.search(r'stock\s+(?:is|to|=|:)?\s*(\d+)', msg_lower)
+    if m_qty:
+        quantity = int(m_qty.group(1))
+    else:
+        m_qty2 = re.search(r'(\d+)\s+(?:units?|sachets?|tablets?|vials?|bottles?|capsules?)', msg_lower)
+        if m_qty2:
+            quantity = int(m_qty2.group(1))
+        else:
+            m_qty3 = re.search(r'(\d+)\s+(?:hai|kar\s*do|kardo)', msg_lower)
+            if m_qty3:
+                quantity = int(m_qty3.group(1))
+            else:
+                m_all = re.findall(r'\b(\d+)\b', msg_lower)
+                if m_all:
+                    quantity = int(m_all[0])
+
+    # 4. Extract daily demand
+    daily_demand = None
+    m_dem = re.search(r'(?:daily\s+)?demand\s+(?:is|=|to|:)?\s*(\d+(?:\.\d+)?)', msg_lower)
+    if m_dem:
+        daily_demand = float(m_dem.group(1))
+    else:
+        m_dem2 = re.search(r'demand\s+(\d+(?:\.\d+)?)\s+hai', msg_lower)
+        if m_dem2:
+            daily_demand = float(m_dem2.group(1))
+
+    # 5. Check for unknown/unsupported medicine tokens
+    unknown_medicine = None
+    m_med = re.search(r'\b([a-zA-Z0-9_\-]+)\s+medicine\b', msg_lower)
+    if m_med:
+        cand = m_med.group(1).lower()
+        if not any(cand in [a.lower() for a in r["aliases"] if not any('\u0900' <= ch <= '\u097F' for ch in a)] for r in RESOURCE_CATALOG):
+            unknown_medicine = m_med.group(1).upper()
+
+    if not unknown_medicine:
+        for tok in UNSUPPORTED_RESOURCE_TOKENS:
+            is_dev = any('\u0900' <= ch <= '\u097F' for ch in tok)
+            if is_dev:
+                if tok in user_msg:
+                    unknown_medicine = tok
+                    break
+            else:
+                if re.search(r'\b' + re.escape(tok) + r'\b', msg_lower):
+                    unknown_medicine = tok.capitalize()
+                    break
+
+    if not unknown_medicine:
+        m_ka_stock = re.search(r'\b([a-zA-Z0-9_\-]+)\s+(?:ka|ke)\s+stock\b', msg_lower)
+        if m_ka_stock:
+            cand = m_ka_stock.group(1).lower()
+            if cand not in ["aaj", "is", "mera", "meri", "humara", "chc", "phc", "ki", "ka", "ke", "total", "current"]:
+                if not any(cand in [a.lower() for a in r["aliases"] if not any('\u0900' <= ch <= '\u097F' for ch in a)] for r in RESOURCE_CATALOG):
+                    db_m = db.query(Medicine).filter(Medicine.name.ilike(cand)).first()
+                    if not db_m:
+                        unknown_medicine = m_ka_stock.group(1).upper()
+
+    # 5b. Devanagari resource in update context that isn't in any alias list → unknown
+    if not unknown_medicine and _has_devanagari(user_msg):
+        # Matched resources via Devanagari aliases already handled in step 6 below.
+        # If there are Devanagari words that look like resource nouns (not facility/stop words)
+        # but didn't match any catalog alias, flag them as unknown.
+        deva_words = re.findall(r'[\u0900-\u097F]+', user_msg)
+        stop_words = {
+            "का", "के", "में", "है", "की", "से", "पर", "को", "और", "आज",
+            "स्टॉक", "स्टाक", "कितना", "कितने", "कितनी", "जाटनी", "जटनी",
+            "बेहाला", "पिपिली", "कटक", "डायमंड", "हार्बर"
+        }
+        unresolved_nouns = [w for w in deva_words if w not in stop_words]
+        # Check if none of these words matched any Devanagari catalog alias
+        if unresolved_nouns and not any(alias in user_msg for item in RESOURCE_CATALOG for alias in item["aliases"] if any('\u0900' <= ch <= '\u097F' for ch in alias)):
+            unknown_medicine = unresolved_nouns[0]
+
+    if unknown_medicine:
+        catalog_names = ", ".join(item["name"] for item in RESOURCE_CATALOG)
+        return AdvisorChatResponse(
+            answer=(
+                f"I couldn't match '{unknown_medicine}' to a resource in the verified Healysis medicine catalog. "
+                f"Did you mean one of: {catalog_names}? "
+                f"Please try again with the correct resource name (e.g., 'ORS', 'Paracetamol', 'Insulin')."
+            ),
+            summary=f"Resource '{unknown_medicine}' unavailable in catalog.",
+            severity="SAFE",
+            evidence=[],
+            data_sources=[],
+            recommended_actions=["Verify the resource name or contact CDMO to register a new SKU."],
+            limitations="Frontline data updates cannot automatically register new medicine SKUs.",
+            requires_human_approval=False
+        )
+
+    # 6. Resolve matching medicine from catalog or DB (Latin + Devanagari)
+    matched_resources = _match_resources_in_text(user_msg, msg_lower)
+
+    if not matched_resources:
+        db_medicines = db.query(Medicine).all()
+        for m in db_medicines:
+            if re.search(r'\b' + re.escape(m.name.lower()) + r'\b', msg_lower) or re.search(r'\b' + re.escape(m.code.lower()) + r'\b', msg_lower):
+                matched_resources.append({"code": m.code, "name": m.name, "unit": m.unit})
+
+    # Ambiguity case 1: Missing resource
+    if len(matched_resources) == 0:
+        return AdvisorChatResponse(
+            answer="Which medicine would you like to update? Please specify the resource name (for example: ORS, Paracetamol, Insulin, Amoxicillin, Cetirizine, or Dextrose).",
+            summary="Missing resource name for inventory update.",
+            severity="SAFE",
+            evidence=[],
+            data_sources=[],
+            recommended_actions=["Specify the name of the medicine you want to update."],
+            limitations="Resource specification is required to prepare an inventory update.",
+            requires_human_approval=False
+        )
+
+    # Ambiguity case 2: Multiple matching medicines
+    if len(matched_resources) > 1:
+        names = [r["name"] for r in matched_resources]
+        return AdvisorChatResponse(
+            answer=f"Multiple matching medicines were detected ({', '.join(names)}). Please specify the exact medicine SKU or name to update.",
+            summary="Ambiguous resource name for inventory update.",
+            severity="SAFE",
+            evidence=[],
+            data_sources=[],
+            recommended_actions=["Clarify the exact medicine SKU."],
+            limitations="Ambiguous resource matches require human clarification.",
+            requires_human_approval=False
+        )
+
+    target_med = matched_resources[0]
+
+    # 7. Resolve facility & enforce RBAC
+    all_facs = db.query(Facility).all()
+    explicit_fac = None
+    for fac in all_facs:
+        name_lower = fac.name.lower()
+        district_lower = fac.district.lower()
+        aliases = [name_lower, fac.facility_code.lower()]
+        if "jatni" in name_lower:
+            aliases.extend(["jatni", "jatni chc"])
+        if "ms das" in name_lower:
+            aliases.extend(["ms das", "kafla", "uphc ms das"])
+        if "pipili" in name_lower:
+            aliases.extend(["pipili", "pipli", "pipili phc", "pipli phc"])
+        if "behala" in name_lower:
+            aliases.extend(["behala", "behala urban", "behala phc"])
+        if "diamond" in name_lower:
+            aliases.extend(["diamond", "diamond harbour", "diamond harbour phc"])
+        for alias in aliases:
+            if re.search(r'\b' + re.escape(alias) + r'\b', msg_lower):
+                explicit_fac = fac
+                break
+        if explicit_fac:
+            break
+
+    if current_user.role == UserRole.FACILITY_OFFICER:
+        user_fac_id = current_user.facility_id
+        user_fac = db.query(Facility).filter(Facility.id == user_fac_id).first()
+        if explicit_fac and explicit_fac.id != user_fac_id:
+            return AdvisorChatResponse(
+                answer=f"Authorization Error: As a Facility Officer for {user_fac.name if user_fac else 'your facility'}, you are only authorized to update inventory for your assigned facility. You cannot update {explicit_fac.name}.",
+                summary=f"Unauthorized facility update attempt rejected for {explicit_fac.name}.",
+                severity="CRITICAL",
+                evidence=[],
+                data_sources=[],
+                recommended_actions=["Update resources only for your assigned facility."],
+                limitations="RBAC enforcement: Facility Officers have facility-scoped write permissions.",
+                requires_human_approval=False
+            )
+        target_fac = user_fac
+    else:
+        # ADMIN or CDMO
+        if explicit_fac:
+            target_fac = explicit_fac
+        elif request_data.facility_id:
+            target_fac = db.query(Facility).filter(Facility.id == request_data.facility_id).first()
+        else:
+            return AdvisorChatResponse(
+                answer="Please specify which facility's inventory you would like to update (e.g., Jatni CHC, UPHC MS Das, Pipili PHC, Behala Urban PHC, Diamond Harbour PHC).",
+                summary="Missing target facility for inventory update.",
+                severity="SAFE",
+                evidence=[],
+                data_sources=[],
+                recommended_actions=["Specify target facility name."],
+                limitations="Facility identification required for inventory update.",
+                requires_human_approval=False
+            )
+
+    if not target_fac:
+        return AdvisorChatResponse(
+            answer="Unable to resolve your assigned healthcare facility. Please ensure your user profile is configured correctly.",
+            summary="Unresolved facility profile.",
+            severity="SAFE",
+            evidence=[],
+            data_sources=[],
+            recommended_actions=["Check facility profile."],
+            limitations="Facility profile required.",
+            requires_human_approval=False
+        )
+
+    # 8. Check quantity extracted
+    if quantity is None:
+        return AdvisorChatResponse(
+            answer=f"Please specify the new stock quantity for {target_med['name']} at {target_fac.name} (e.g., '180 units').",
+            summary="Missing stock quantity for inventory update.",
+            severity="SAFE",
+            evidence=[],
+            data_sources=[],
+            recommended_actions=["Specify numeric stock quantity."],
+            limitations="Numeric stock quantity is required.",
+            requires_human_approval=False
+        )
+
+    # 9. Verify resource exists in facility inventory
+    inv = db.query(Inventory).filter(
+        Inventory.facility_id == target_fac.id,
+        Inventory.item_code == target_med["code"]
+    ).first()
+
+    if not inv:
+        inv = db.query(Inventory).join(Medicine).filter(
+            Inventory.facility_id == target_fac.id,
+            Medicine.code == target_med["code"]
+        ).first()
+
+    if not inv:
+        return AdvisorChatResponse(
+            answer=f"{target_med['name']} (`{target_med['code']}`) is not registered in the active inventory for {target_fac.name}. New items cannot be auto-created via chat.",
+            summary=f"Resource {target_med['name']} not registered at {target_fac.name}.",
+            severity="SAFE",
+            evidence=[],
+            data_sources=[],
+            recommended_actions=["Contact administrator to register this SKU for the facility."],
+            limitations="Frontline data updates cannot automatically register new medicine SKUs.",
+            requires_human_approval=False
+        )
+
+    forecast = db.query(Forecast).filter(
+        Forecast.facility_id == target_fac.id,
+        Forecast.item_code == inv.item_code
+    ).first()
+    current_demand = forecast.expected_daily_demand if forecast else 10.0
+
+    # 10. Compare proposed values with verified database values (No-Op check)
+    is_stock_unchanged = (inv.quantity == quantity)
+    is_demand_unchanged = (daily_demand is None or abs(daily_demand - current_demand) < 1e-4)
+
+    if is_stock_unchanged and is_demand_unchanged:
+        clean_fac_name = get_clean_facility_name(target_fac)
+        return AdvisorChatResponse(
+            answer=f"{inv.item_name} stock at **{clean_fac_name}** is already recorded as **{inv.quantity} {inv.unit}**. No inventory update is required.",
+            summary=f"{inv.item_name} stock at {clean_fac_name} is already recorded as {inv.quantity} {inv.unit}. No changes required.",
+            severity="SAFE",
+            evidence=[{
+                "facility_id": target_fac.id,
+                "facility_name": target_fac.name,
+                "item_code": inv.item_code,
+                "item_name": inv.item_name,
+                "current_quantity": inv.quantity,
+                "proposed_quantity": quantity,
+                "current_daily_demand": current_demand,
+                "proposed_daily_demand": daily_demand,
+                "status": "NO_OP_UNCHANGED"
+            }],
+            data_sources=["facility_inventory_catalog", "frontline_telemetry_input"],
+            recommended_actions=["No update required. Current facility stock is already up to date."],
+            limitations="No inventory mutation was performed because proposed telemetry matches current recorded values.",
+            requires_human_approval=False,
+            pending_update=None
+        )
+
+    token = generate_update_token(current_user.id, target_fac.id, inv.item_code, quantity, daily_demand)
+
+    pending = PendingInventoryUpdate(
+        facility_id=target_fac.id,
+        facility_name=target_fac.name,
+        item_code=inv.item_code,
+        item_name=inv.item_name,
+        current_quantity=inv.quantity,
+        new_quantity=quantity,
+        current_daily_demand=current_demand,
+        new_daily_demand=daily_demand,
+        unit=inv.unit,
+        confirmation_token=token
+    )
+
+    demand_line = f"• **New Daily Demand**: {daily_demand} {inv.unit}/day (Current: {current_demand})\n" if daily_demand is not None else f"• **Daily Demand**: {current_demand} {inv.unit}/day (Unchanged)\n"
+
+    answer_text = (
+        f"Please confirm this inventory update for **{target_fac.name}**:\n\n"
+        f"• **Facility**: {target_fac.name}\n"
+        f"• **Resource**: {inv.item_name} (`{inv.item_code}`)\n"
+        f"• **Current Stock**: {inv.quantity} {inv.unit}\n"
+        f"• **New Stock**: {quantity} {inv.unit}\n"
+        f"{demand_line}\n"
+        f"Click **Confirm Update** below to apply this update to the database and generate an audit record, or click **Cancel** to discard."
+    )
+
+    return AdvisorChatResponse(
+        answer=answer_text,
+        summary=f"Pending inventory update awaiting confirmation: {inv.item_name} at {target_fac.name}.",
+        severity="SAFE",
+        evidence=[{
+            "facility_id": target_fac.id,
+            "facility_name": target_fac.name,
+            "item_code": inv.item_code,
+            "item_name": inv.item_name,
+            "current_quantity": inv.quantity,
+            "proposed_quantity": quantity,
+            "current_daily_demand": current_demand,
+            "proposed_daily_demand": daily_demand,
+            "status": "PENDING_HUMAN_CONFIRMATION"
+        }],
+        data_sources=["frontline_telemetry_input", "facility_inventory_catalog"],
+        recommended_actions=["Review proposed stock numbers and click Confirm Update."],
+        limitations="This update requires explicit human confirmation before database mutation.",
+        requires_human_approval=True,
+        pending_update=pending
+    )
+
+
+# ==========================================
 # Main AI Advisor Runner
 # ==========================================
 
@@ -1056,6 +1692,11 @@ def run_grounded_ai_advisor(
             limitations="This AI Advisor provides decision support only.",
             requires_human_approval=False
         )
+
+    # 2.5 Frontline / Field Inventory Update Intent Pipeline (Feature 2.1)
+    update_response = handle_frontline_inventory_update_intent(user_msg, request_data, current_user, db)
+    if update_response is not None:
+        return update_response
 
     # 3. Dynamic Structured Query Interpretation Pipeline
     sq = interpret_user_query(user_msg, db, current_user)
@@ -1153,3 +1794,68 @@ def run_grounded_ai_advisor(
         limitations="This AI Advisor provides decision support only. All redistribution actions require human CDMO/Admin operational approval.",
         requires_human_approval=True
     )
+
+
+def generate_conversation_title(message: str) -> str:
+    """
+    Generates a concise, deterministic conversation title from the first user message.
+    Purely deterministic string pattern matching without LLM invocation.
+    """
+    text = message.strip()
+    lower = text.lower()
+
+    # Telemetry / Stock updates
+    if "ors" in lower and any(w in lower for w in ["stock", "hai", "kardo", "update", "units", "sachets"]):
+        return "ORS Stock Update"
+    if "paracetamol" in lower and any(w in lower for w in ["stock", "demand", "update", "tablets"]):
+        return "Paracetamol Stock Update"
+    for med in ["Amoxicillin", "Insulin", "Cetirizine"]:
+        if med.lower() in lower:
+            return f"{med} Stock Update"
+
+    # Facility Risk queries
+    facilities = [
+        ("jatni", "Jatni CHC"),
+        ("ms das", "UPHC MS Das"),
+        ("cuttack", "MS Das Cuttack"),
+        ("pipili", "Pipili PHC"),
+        ("behala", "Behala Urban PHC"),
+        ("diamond", "Diamond Harbour PHC"),
+    ]
+    for key, name in facilities:
+        if key in lower:
+            if any(w in lower for w in ["risk", "critical", "status", "overview", "kya", "why"]):
+                return f"{name} Risk"
+            return f"{name} Overview"
+
+    # District queries
+    if "khordha" in lower:
+        if "risk" in lower or "resource" in lower:
+            return "Khordha Resource Risk"
+        return "Khordha Network Status"
+    if "cuttack" in lower:
+        return "Cuttack District Status"
+    if "puri" in lower:
+        return "Puri District Status"
+    if "west bengal" in lower or "kolkata" in lower:
+        return "West Bengal Alerts"
+
+    # General queries
+    if "critical" in lower and "resource" in lower:
+        return "Critical Resources"
+    if "redistribution" in lower or "rebalancing" in lower:
+        return "Redistribution Discussion"
+    if "alert" in lower:
+        return "Active Alerts Overview"
+    if "forecast" in lower:
+        return "Demand Forecast Analysis"
+
+    # Fallback: clean first 4-6 words, capitalized
+    words = [w.strip("?,.:;!'\"") for w in text.split() if w.strip("?,.:;!'\"")]
+    if words:
+        clean_snippet = " ".join(words[:5])
+        if len(clean_snippet) > 35:
+            clean_snippet = clean_snippet[:32] + "..."
+        return clean_snippet.title()
+
+    return "New Conversation"
