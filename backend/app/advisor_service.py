@@ -38,7 +38,21 @@ PROMPT_INJECTION_PATTERNS = [
     "execute transfer", "approve transfer", "call database directly", "ignore rbac",
     "give me another facility", "bypass security", "sql injection", "drop table",
     "system prompt", "reveal prompt", "show prompt", "ignore your rules", "show me the api key",
-    "show firebase", "show token", "show secret", "firebase credentials"
+    "show firebase", "show token", "show secret", "firebase credentials",
+    # Adversarial role bypass & social engineering patterns
+    "ignore my current role", "ignore my role", "ignore role", "ignore your role",
+    "mere role ko ignore", "role ko ignore", "ignore karke",
+    # Private chat and user data espionage patterns
+    "private conversations", "private conversation", "all users and their private",
+    "another user's chat", "other users' chat", "user's chat history", "another user's conversations",
+    "chat history of another user",
+    # Unauthorized access probing
+    "not allowed to access", "not permitted to access", "restricted facility information",
+    # Hidden instruction extraction
+    "hidden system instructions", "system instructions", "hidden instructions",
+    # Credential & configuration harvesting
+    "reveal configuration", "internal credentials", "secrets, tokens", "tokens, api keys",
+    "reveal tokens", "reveal secrets"
 ]
 
 UNRELATED_QUERY_KEYWORDS = [
@@ -200,6 +214,7 @@ class StructuredQuery:
         self.answer_style: str = "DIRECT"
         self.requires_clarification: bool = False
         self.clarification_prompt: Optional[str] = None
+        self.original_msg: str = ""
 
 def _match_resources_in_text(text: str, text_lower: str) -> List[Dict[str, Any]]:
     """
@@ -255,6 +270,7 @@ def _devanagari_unsupported_resource(text: str, msg_lower: str) -> Optional[str]
 
 def interpret_user_query(user_msg: str, db: Session, current_user: User) -> StructuredQuery:
     sq = StructuredQuery()
+    sq.original_msg = user_msg
     msg_lower = user_msg.lower().strip()
 
     all_facs = db.query(Facility).all()
@@ -396,7 +412,8 @@ def interpret_user_query(user_msg: str, db: Session, current_user: User) -> Stru
             grammar_and_fac_words = {
                 "का", "के", "की", "में", "है", "हैं", "था", "थी", "स्टॉक", "स्टाक",
                 "आज", "कितना", "कितने", "कितनी", "जाटनी", "पिपिली", "बेहाला", "डायमंड", "हारबर",
-                "क्या", "बताओ", "दिखाओ", "हॉस्पिटल", "अस्पताल"
+                "क्या", "बताओ", "दिखाओ", "हॉस्पिटल", "अस्पताल", "कोई", "कुछ", "सब", "समस्या", "परेशानी",
+                "दिक्कत", "गंभीर", "गम्भीर"
             }
             unresolved_nouns = [w for w in deva_words if w not in grammar_and_fac_words]
             if unresolved_nouns:
@@ -412,7 +429,9 @@ def interpret_user_query(user_msg: str, db: Session, current_user: User) -> Stru
                     "total", "monitored", "current", "the", "all", "our", "available", "my", "overall",
                     "jatni", "pipili", "behala", "diamond", "harbour", "kolkata", "khordha", "puri", "south24",
                     "mein", "me", "mai", "ka", "ki", "ke", "hai", "aaj", "kitna", "kitne", "kitni", "kya",
-                    "show", "tell", "check", "give", "display", "hospital", "chc", "phc", "uphc"
+                    "show", "tell", "check", "give", "display", "hospital", "chc", "phc", "uphc",
+                    "urgent", "serious", "critical", "problem", "issue", "complete", "level", "kaunsi",
+                    "which", "any", "emergency", "jaldi", "stockout", "soon"
                 }
                 if cand not in stop_words and len(cand) >= 2:
                     sq.unresolved_resources.append(cand)
@@ -485,7 +504,16 @@ def interpret_user_query(user_msg: str, db: Session, current_user: User) -> Stru
         sq.comparison_targets = sq.facility_scope[:2]
         return sq
 
-    # I. Ranking / Geography Risk
+    # I. Ranking / Geography Risk / Stockout Timing
+    if any(k in msg_lower for k in [
+        "stockout soon", "face a stockout", "jaldi stockout", "stockout hone wali",
+        "pehle stockout", "earliest stockout", "stock out soon"
+    ]):
+        sq.intent = "STOCKOUT_SOONEST"
+        sq.answer_style = "DETAILED"
+        sq.requested_operation = "evaluate_risk"
+        return sq
+
     if "which district has the highest" in msg_lower or "highest stockout risk" in msg_lower:
         sq.intent = "RANKING_DISTRICT"
         sq.answer_style = "RANKING"
@@ -507,8 +535,12 @@ def interpret_user_query(user_msg: str, db: Session, current_user: User) -> Stru
         sq.requested_operation = "explain"
         return sq
 
-    # K. Stockout Risk / Low Stock
-    if any(k in msg_lower for k in ["at risk", "stockout risk", "critical risk", "shortage", "low stock", "run out"]):
+    # K. Stockout Risk / Low Stock / Urgent Issues
+    if any(k in msg_lower for k in [
+        "at risk", "stockout risk", "critical risk", "shortage", "low stock", "run out",
+        "urgent stock", "serious stock", "stock problem", "critical stock", "critical level",
+        "stockout", "urgent issue", "serious problem"
+    ]) or any(k in user_msg for k in ["समस्या", "परेशानी", "गंभीर"]):
         sq.intent = "STOCKOUT_RISK"
         sq.answer_style = "DETAILED"
         sq.requested_operation = "evaluate_risk"
@@ -774,12 +806,47 @@ def format_grounded_operational_answer(
             return "\n".join(lines).strip(), "CRITICAL"
         else:
             res_phrase = f" for {res_filter_name}" if res_filter_name else ""
+            if len(fac_telemetry) == 1:
+                single_fn = get_clean_facility_name(fac_telemetry[0]["facility"])
+                ans = f"There are currently no urgent stock issues or critical alerts at {single_fn} today. All monitored medicines maintain adequate stock coverage."
+                return ans, "SAFE"
             lines = [
-                f"{scope_label}: {num_facs_eval} facilities evaluated, 0 currently at stockout risk{res_phrase}."
+                f"{scope_label}: {num_facs_eval} facilities evaluated, 0 currently at critical stockout risk{res_phrase}."
             ]
             for s in safe_list:
                 lines.append(f"• {s}")
             return "\n".join(lines).strip(), "SAFE"
+
+    # ==========================================
+    # Handler: STOCKOUT_SOONEST (Which medicine will stock out soonest)
+    # ==========================================
+    if query.intent == "STOCKOUT_SOONEST":
+        target = fac_telemetry[0] if fac_telemetry else None
+        if not target:
+            return "No facility operational telemetry available.", "SAFE"
+        
+        fname = get_clean_facility_name(target["facility"])
+        fcs = target["forecasts"]
+        if not fcs:
+            return f"At {fname}, telemetry forecasts are currently being calibrated.", "SAFE"
+        
+        # Sort by days of cover ascending
+        fcs_sorted = sorted(fcs, key=lambda fc: fc.days_of_cover if fc.days_of_cover is not None else 99.0)
+        soonest = fcs_sorted[0]
+        med = next((m for m in RESOURCE_CATALOG if m["code"] == soonest.item_code), None)
+        med_name = med["name"] if med else soonest.item_code
+        inv = next((i for i in target["inventory"] if i.item_code == soonest.item_code), None)
+        qty = inv.quantity if inv else 0
+        unit = inv.unit if inv else "units"
+        doc = soonest.days_of_cover
+        so_date = str(soonest.projected_stockout_date) if soonest.projected_stockout_date else "in the near term"
+        sev = "CRITICAL" if doc < 3.0 else ("WARNING" if doc < 7.0 else "SAFE")
+        
+        ans = (
+            f"At {fname}, {med_name} is the medicine with the lowest remaining supply buffer, "
+            f"currently at {qty} {unit} with {doc:.1f} days of cover (projected stockout date: {so_date}, risk severity: {sev})."
+        )
+        return ans, sev
 
     # ==========================================
     # Handler: RANKING / GEOGRAPHY RISK
@@ -906,9 +973,20 @@ def format_grounded_operational_answer(
         qty = inv.quantity if inv else 0
 
         doc = fc.days_of_cover if fc else 99.0
+        demand = fc.expected_daily_demand if fc else 10.0
         sev = "CRITICAL" if doc < 3.0 else ("WARNING" if doc < 7.0 else "SAFE")
 
-        ans = f"{fname} currently has {qty} {res_name} {res_unit}."
+        has_doc_request = any(k in query.original_msg.lower() for k in ["days of cover", "doc", "cover", "coverage"])
+        has_demand_request = any(k in query.original_msg.lower() for k in ["daily demand", "demand", "khapat"])
+
+        if has_demand_request and has_doc_request:
+            ans = f"{fname} currently has {qty} {res_name} {res_unit} with expected daily demand of {demand:.1f} {res_unit}/day and {doc:.1f} days of cover."
+        elif has_doc_request:
+            ans = f"{fname} currently has {qty} {res_name} {res_unit} with {doc:.1f} days of cover."
+        elif has_demand_request:
+            ans = f"{fname} currently has {qty} {res_name} {res_unit} with expected daily demand of {demand:.1f} {res_unit}/day."
+        else:
+            ans = f"{fname} currently has {qty} {res_name} {res_unit}."
         return ans, sev
 
     # ==========================================
@@ -1240,7 +1318,7 @@ def handle_frontline_inventory_update_intent(
         re.search(r'^(?:what|which|why|how|where|when|who|check|compare|list|show|tell|explain|give)\b', msg_lower)
         and not re.search(r'\b(?:kar\s*do|kardo|update|set|badha|ghata)\b', msg_lower)
     ) or bool(
-        re.search(r'\b(?:kya|kitna|kitne|kitni|kyun|kahan|kisko)\b', msg_lower)
+        re.search(r'\b(?:kya|kitna|kitne|kitni|kyun|kahan|kisko|kaunsi|kaunsa|kaunse|kaun|kis)\b', msg_lower)
         and not re.search(r'\b(?:kar\s*do|kardo|update|set)\b', msg_lower)
     )
     if is_pure_question:
@@ -1313,7 +1391,8 @@ def handle_frontline_inventory_update_intent(
 
     # I. Unknown medicine pattern: "XYZ medicine ka stock 100 hai"
     if re.search(r'\b[a-zA-Z0-9_\-]+\s+medicine\b', msg_lower) and "stock" in msg_lower:
-        is_update_intent = True
+        if not re.search(r'\b(?:kaunsi|which|kaunsa|kaunse|kaun)\b', msg_lower) and "stockout" not in msg_lower:
+            is_update_intent = True
 
     if not is_update_intent:
         return None
