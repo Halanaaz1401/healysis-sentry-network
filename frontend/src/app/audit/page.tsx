@@ -191,15 +191,22 @@ export default function AuditPage() {
           </button>
         </div>
 
-        {/* Security callout */}
-        <div className="bg-[#0C2B4E] bg-opacity-5 border border-slate-200 p-4 rounded-xl flex items-start gap-3">
-          <IconShieldCheck size={20} className="text-[#1D546C] shrink-0 mt-0.5" />
-          <div className="text-xs space-y-0.5">
-            <span className="font-bold text-[#0C2B4E]">Tamper-Evident Chain Ledger</span>
-            <p className="text-slate-600 leading-relaxed">
+        {/* Security callout - High contrast dark navy banner */}
+        <div className="bg-[#0C2B4E] border border-[#1A3D64] p-4 rounded-xl flex items-start gap-3.5 shadow-xs">
+          <div className="p-1.5 bg-[#1D546C]/50 rounded-lg shrink-0 mt-0.5 border border-cyan-400/30">
+            <IconShieldCheck size={20} className="text-cyan-300" />
+          </div>
+          <div className="text-xs space-y-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="font-bold text-white font-mono tracking-wide text-xs">Tamper-Evident Chain Ledger</span>
+              <span className="text-[10px] font-bold uppercase tracking-wider bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 px-2 py-0.5 rounded-full font-mono">
+                SHA-256 Cryptographic Chain
+              </span>
+            </div>
+            <p className="text-slate-200 leading-relaxed font-sans text-xs">
               Each audit block is cryptographically linked to the previous block via SHA-256 hashing.
               Any modification to a historical record will cause hash verification to fail and mark the block as TAMPERED.
-              This ledger is read-only.
+              This ledger is strictly read-only.
             </p>
           </div>
         </div>

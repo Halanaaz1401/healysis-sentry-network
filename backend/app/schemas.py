@@ -4,7 +4,8 @@ from pydantic import BaseModel, Field, ConfigDict, EmailStr, field_validator
 from app.models import (
     UserRole, FacilityType, MedicineCategory, ActionType, 
     PersonnelRole, AlertSeverity, AlertType, AlertStatus, 
-    UrgencyLevel, RecommendationStatus, RequisitionStatus
+    UrgencyLevel, RecommendationStatus, RequisitionStatus,
+    NotificationChannel, NotificationStatus
 )
 
 # ==========================================
@@ -98,6 +99,7 @@ class ForecastResponse(BaseModel):
     safety_stock: Optional[int] = None
     incoming_quantity: Optional[int] = None
     risk_level: Optional[str] = None
+    explanation: Optional[Dict[str, Any]] = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -117,6 +119,29 @@ class AlertResponse(BaseModel):
     status: AlertStatus
     created_at: datetime
     updated_at: datetime
+    facility_name: Optional[str] = None
+    item_name: Optional[str] = None
+    explanation: Optional[Dict[str, Any]] = None
+    notification_lifecycle: Optional[Dict[str, Any]] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+class AlertActionRequest(BaseModel):
+    reason: Optional[str] = Field(None, max_length=500, description="Optional operator reason for action")
+
+
+class RiskExplanationResponse(BaseModel):
+    entity_type: str = "ALERT"
+    entity_id: int
+    code: str
+    facility_id: int
+    facility_name: str
+    resource_id: str
+    resource_name: str
+    severity: str
+    evidence: Dict[str, Any]
+    why: str
+    recommended_action: str
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -147,10 +172,223 @@ class RecommendationResponse(BaseModel):
     item_name: Optional[str] = None
     donor_current_stock: Optional[int] = None
     donor_safety_stock: Optional[int] = None
+    donor_surplus: Optional[int] = None
     recipient_current_stock: Optional[int] = None
     recipient_safety_stock: Optional[int] = None
+    recipient_days_of_cover: Optional[float] = None
+    recipient_daily_demand: Optional[float] = None
+    requester_name: Optional[str] = None
+    requester_role: Optional[str] = None
+    requesting_facility_name: Optional[str] = None
+    reviewed_by_name: Optional[str] = None
+    reviewed_by_role: Optional[str] = None
+    reviewed_at: Optional[datetime] = None
+    explanation: Optional[Dict[str, Any]] = None
+    verification_status: Optional[str] = None
+    verification_summary: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
+
+class RecommendationExplanationResponse(BaseModel):
+    entity_type: str = "RECOMMENDATION"
+    recommendation_id: int
+    recommendation_code: str
+    resource_id: str
+    resource_name: str
+    donor_facility_id: int
+    donor_facility_name: str
+    recipient_facility_id: int
+    recipient_facility_name: str
+    recommended_quantity: int
+    urgency_level: str
+    evidence: Dict[str, Any]
+    why: str
+    recommended_action: str
+    provenance: Optional[Dict[str, Any]] = None
+    answers: Optional[Dict[str, str]] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+# ==========================================
+# What-If Simulation Schemas
+# ==========================================
+class RedistributionSimulationRequest(BaseModel):
+    donor_facility_id: int = Field(..., description="ID of donor facility providing stock")
+    recipient_facility_id: int = Field(..., description="ID of recipient facility receiving stock")
+    item_code: Optional[str] = Field(None, description="SKU item code e.g. MED-ORS-SACHET")
+    medicine_id: Optional[int] = Field(None, description="Medicine ID (optional if item_code provided)")
+    transfer_quantity: int = Field(..., description="Proposed transfer quantity (> 0)")
+
+class SimulationNodeMetrics(BaseModel):
+    facility_id: int
+    facility_name: str
+    district: Optional[str] = None
+    state: Optional[str] = None
+    current_stock: int
+    simulated_stock: int
+    daily_demand: float
+    current_days_of_cover: float
+    simulated_days_of_cover: float
+    current_risk_severity: str = "SAFE"
+    simulated_risk_severity: str = "SAFE"
+    safety_buffer: int
+    safety_stock: Optional[int] = None
+    projected_7day_demand: float = 0.0
+    current_projected_stockout: Optional[str] = None
+    simulated_projected_stockout: Optional[str] = None
+    before: Optional[Dict[str, Any]] = None
+    after: Optional[Dict[str, Any]] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+class SimulationDonorNode(SimulationNodeMetrics):
+    proposed_transfer_quantity: Optional[int] = None
+    surplus_available: int
+    buffer_preserved: bool
+    days_of_cover_lost: float
+
+class SimulationRecipientNode(SimulationNodeMetrics):
+    buffer_achieved: bool
+    days_of_cover_gained: float
+
+class SimulationRiskAnalysis(BaseModel):
+    recipient_improves: bool
+    recipient_remains_below_safety: bool
+    donor_falls_below_safety: bool
+    donor_becomes_new_risk: bool
+    creates_or_worsens_stockout: bool
+    is_operationally_safe: bool
+    within_donor_surplus: bool
+
+    model_config = ConfigDict(from_attributes=True)
+
+class RedistributionSimulationResponse(BaseModel):
+    simulation_id: str
+    simulation_only: bool = True
+    resource_id: str
+    resource_name: str
+    unit: str
+    transfer_quantity: int
+    haversine_distance_km: float
+    status: str  # "SAFE" | "CAUTION" | "UNSAFE"
+    feasibility_status: str = "FEASIBLE"  # "FEASIBLE" | "INFEASIBLE"
+    reason: str
+    donor: SimulationDonorNode
+    recipient: SimulationRecipientNode
+    risk_analysis: SimulationRiskAnalysis
+    impact: Optional[Dict[str, Any]] = None
+    validation: Optional[Dict[str, Any]] = None
+    disclaimer: str = "Simulation only — no inventory has been changed. Operational transfers require explicit human approval by an authorized CDMO or Admin."
+
+    model_config = ConfigDict(from_attributes=True)
+
+# ==========================================
+# Before -> After Verification Schemas
+# ==========================================
+class VerificationNodeSummary(BaseModel):
+    facility_id: int
+    facility_name: str
+    facility_type: Optional[str] = None
+    role: str  # "RECIPIENT" or "DONOR"
+    stock_before: int
+    stock_after_expected: int
+    stock_after_actual: int
+    stock_match: bool
+    safety_stock: int
+    daily_demand: float
+    days_of_cover_before: float
+    days_of_cover_after: float
+    risk_status_before: str
+    risk_status_after: str
+    safety_buffer_protected: bool
+
+    model_config = ConfigDict(from_attributes=True)
+
+class AuditMovementReference(BaseModel):
+    event_id: Optional[str] = None
+    timestamp: Optional[datetime] = None
+    action: Optional[str] = None
+    actor_id: Optional[int] = None
+    actor_name: Optional[str] = None
+    actor_role: Optional[str] = None
+    current_hash: Optional[str] = None
+    previous_hash: Optional[str] = None
+    is_tampered: bool = False
+    ledger_verified: bool = False
+
+    model_config = ConfigDict(from_attributes=True)
+
+class ExpectedVsActualResult(BaseModel):
+    approved_quantity: int
+    actual_quantity_moved: int
+    quantity_matches: bool
+    recipient_stock_matches: bool
+    donor_stock_matches: bool
+    ledger_integrity_passed: bool
+    overall_match: bool
+
+    model_config = ConfigDict(from_attributes=True)
+
+class RecommendationVerificationResponse(BaseModel):
+    recommendation_id: int
+    recommendation_code: str
+    item_code: str
+    item_name: str
+    unit: str
+    status: str  # "PASSED" | "FAILED / REVIEW REQUIRED" | "PENDING" | "REJECTED"
+    verified_at: datetime
+    execution_status: str  # "APPROVED_AND_EXECUTED" | "PENDING_APPROVAL" | "REJECTED"
+    recipient: VerificationNodeSummary
+    donor: VerificationNodeSummary
+    audit_reference: Optional[AuditMovementReference] = None
+    comparison: ExpectedVsActualResult
+    summary: str
+    discrepancies: List[str] = Field(default_factory=list)
+    checklist: Dict[str, Any] = Field(default_factory=dict)
+
+    model_config = ConfigDict(from_attributes=True)
+
+# ==========================================
+# Notification & Escalation Schemas
+# ==========================================
+class NotificationResponse(BaseModel):
+    id: int
+    notification_code: str
+    alert_id: int
+    facility_id: int
+    facility_name: Optional[str] = None
+    resource_id: Optional[str] = None
+    item_name: Optional[str] = None
+    severity: str
+    channel: str
+    recipient_role: str
+    recipient_user_id: Optional[int] = None
+    title: str
+    message: str
+    status: str
+    escalation_level: int
+    escalation_reason: Optional[str] = None
+    is_escalated: bool
+    escalated_at: Optional[datetime] = None
+    acknowledged_at: Optional[datetime] = None
+    acknowledged_by_user_id: Optional[int] = None
+    acknowledged_by_name: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+    alert_details: Optional[Dict[str, Any]] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+class UnreadNotificationsResponse(BaseModel):
+    unread_count: int
+    escalated_count: int
+    notifications: List[NotificationResponse]
+
+class NotificationAcknowledgeRequest(BaseModel):
+    reason: Optional[str] = Field(None, max_length=500, description="Optional operator reason for acknowledgment")
+
+class EscalationProcessRequest(BaseModel):
+    force_timeout_minutes: Optional[int] = Field(None, ge=0, description="Optional override timeout in minutes for testing or emergency run")
 
 # ==========================================
 # Gemini AI Advisor Schemas
@@ -161,6 +399,7 @@ class ChatMessage(BaseModel):
 
 class AdvisorChatRequest(BaseModel):
     message: str = Field(..., min_length=1, max_length=1000, description="User query for AI Advisor (Max 1000 chars)")
+    language: Optional[str] = Field("en", description="Preferred response language: 'en', 'hi', 'hinglish'")
     facility_id: Optional[int] = Field(None, ge=1, description="Optional target facility ID context")
     history: Optional[List[ChatMessage]] = Field(default=[], description="Optional conversation history")
     conversation_id: Optional[int] = Field(None, ge=1, description="Optional conversation ID to bind message to")
@@ -248,3 +487,95 @@ class InventoryUpdateConfirmationResponse(BaseModel):
     days_of_cover: float
     severity: str
     audit_event_id: str
+
+# ==========================================
+# Feature #11: Network Intelligence Schemas
+# ==========================================
+
+class DistrictBreakdownItem(BaseModel):
+    district: str
+    state: str
+    facility_count: int
+    critical_facilities_count: int
+    warning_facilities_count: int
+    safe_facilities_count: int
+    total_inventory: int
+    total_daily_velocity: float
+    resources_at_risk_count: int
+    resources_surplus_count: int
+    active_alerts_count: int
+    pending_interventions_count: int
+
+    model_config = ConfigDict(from_attributes=True)
+
+class ResourceIntelligenceItem(BaseModel):
+    item_code: str
+    item_name: str
+    category: str
+    unit: str
+    total_network_stock: int
+    total_daily_demand: float
+    network_days_of_cover: float
+    facilities_below_safety_count: int
+    critical_facilities_count: int
+    warning_facilities_count: int
+    surplus_facilities_count: int
+    potential_donors: List[str] = []
+    potential_recipients: List[str] = []
+
+    model_config = ConfigDict(from_attributes=True)
+
+class InterventionPriorityItem(BaseModel):
+    priority_rank: int
+    facility_id: int
+    facility_name: str
+    district: str
+    state: str
+    item_code: str
+    item_name: str
+    current_stock: int
+    daily_demand: float
+    days_of_cover: float
+    safety_stock: int
+    risk_severity: str
+    projected_stockout_date: Optional[str] = None
+    has_pending_recommendation: bool = False
+    existing_recommendation_code: Optional[str] = None
+    suggested_action: str
+
+    model_config = ConfigDict(from_attributes=True)
+
+class NetworkOverviewMetrics(BaseModel):
+    total_facilities: int
+    total_resources_monitored: int
+    critical_facilities_count: int
+    warning_facilities_count: int
+    safe_facilities_count: int
+    total_stock_units: int
+    facilities_requiring_intervention: int
+    pending_redistribution_recommendations: int
+    active_critical_alerts: int
+    active_warning_alerts: int
+    network_shortage_count: int
+    network_surplus_count: int
+
+    model_config = ConfigDict(from_attributes=True)
+
+class NetworkRiskSummary(BaseModel):
+    classification: str  # "CRITICAL" | "WARNING" | "STABLE"
+    headline: str
+    explanation: str
+    criteria_met: List[str] = []
+
+    model_config = ConfigDict(from_attributes=True)
+
+class NetworkIntelligenceResponse(BaseModel):
+    generated_at: str
+    overview: NetworkOverviewMetrics
+    risk_summary: NetworkRiskSummary
+    districts: List[DistrictBreakdownItem]
+    resources: List[ResourceIntelligenceItem]
+    intervention_priority: List[InterventionPriorityItem]
+    disclaimer: str = "Authoritative network intelligence aggregated from verified facility records. Strictly read-only."
+
+    model_config = ConfigDict(from_attributes=True)

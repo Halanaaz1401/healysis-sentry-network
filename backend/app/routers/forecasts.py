@@ -4,12 +4,13 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models import Forecast, Facility, Medicine, Inventory, User, UserRole
-from app.schemas import ForecastResponse
+from app.schemas import ForecastResponse, RiskExplanationResponse
 from app.security import (
     get_current_user, require_facility_officer, require_cdmo, 
     verify_facility_access
 )
 from app.algorithms import run_forecast_and_alert_engine, classify_risk_severity
+from app.explainability import build_risk_explanation_for_forecast
 
 router = APIRouter(prefix="/api/v1", tags=["Demand Forecasting & Risk Engine"])
 
@@ -29,6 +30,8 @@ def _enrich_forecast(f: Forecast, db: Session) -> ForecastResponse:
     else:
         risk_level = "CRITICAL" if f.days_of_cover < 3 else ("WARNING" if f.days_of_cover < 7 else "SAFE")
 
+    explanation = build_risk_explanation_for_forecast(f, db)
+
     return ForecastResponse(
         id=f.id,
         facility_id=f.facility_id,
@@ -47,7 +50,8 @@ def _enrich_forecast(f: Forecast, db: Session) -> ForecastResponse:
         current_stock=current_stock,
         safety_stock=safety_stock,
         incoming_quantity=incoming_quantity,
-        risk_level=risk_level
+        risk_level=risk_level,
+        explanation=explanation
     )
 
 @router.get("/forecasts", response_model=List[ForecastResponse])
@@ -88,6 +92,29 @@ def get_forecast_by_id(
 
     verify_facility_access(forecast.facility_id, current_user)
     return _enrich_forecast(forecast, db)
+
+@router.get("/forecasts/{forecast_id}/explanation", response_model=RiskExplanationResponse)
+def get_forecast_explanation(
+    forecast_id: int,
+    current_user: User = Depends(require_facility_officer),
+    db: Session = Depends(get_db)
+):
+    """
+    Returns an authoritative, deterministic explanation of demand forecast calculations,
+    days of cover, and stockout risk.
+    Enforces facility-scoped access control.
+    """
+    forecast = db.query(Forecast).filter(Forecast.id == forecast_id).first()
+    if not forecast:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Forecast with id={forecast_id} not found."
+        )
+
+    verify_facility_access(forecast.facility_id, current_user)
+    explanation = build_risk_explanation_for_forecast(forecast, db)
+    return RiskExplanationResponse(**explanation)
+
 
 @router.get("/facilities/{facility_id}/forecasts", response_model=List[ForecastResponse])
 def get_facility_forecasts(

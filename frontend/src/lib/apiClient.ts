@@ -15,7 +15,7 @@ export class ApiError extends Error {
 }
 
 export async function apiFetch<T = any>(endpoint: string, options: ApiOptions = {}): Promise<T> {
-  let token = MOCK_USERS[0].token;
+  let token = "";
   if (typeof window !== "undefined") {
     const saved = localStorage.getItem("healysis_user");
     if (saved) {
@@ -24,17 +24,15 @@ export async function apiFetch<T = any>(endpoint: string, options: ApiOptions = 
         if (u && u.token) {
           token = u.token;
         }
-      } catch (e) {
+      } catch {
         // fallback
       }
     }
   }
 
-  const authHeaderValue = token.startsWith("Bearer ") ? token : `Bearer ${token}`;
-
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
-    "Authorization": authHeaderValue,
+    ...(token ? { "Authorization": token.startsWith("Bearer ") ? token : `Bearer ${token}` } : {}),
     ...(options.headers || {})
   };
 
@@ -52,11 +50,17 @@ export async function apiFetch<T = any>(endpoint: string, options: ApiOptions = 
     try {
       const errJson = await response.json();
       errorDetail = errJson.detail || errJson.error || response.statusText;
-    } catch (e) {
+    } catch {
       errorDetail = response.statusText;
     }
 
     if (response.status === 401) {
+      if (typeof window !== "undefined") {
+        localStorage.removeItem("healysis_user");
+        if (window.location.pathname !== "/login") {
+          window.location.href = `/login?redirect=${encodeURIComponent(window.location.pathname)}`;
+        }
+      }
       throw new ApiError(401, errorDetail || "Your session could not be authenticated. Please sign in again.");
     } else if (response.status === 403) {
       throw new ApiError(403, errorDetail || "You are authenticated but do not have permission to perform this action.");

@@ -96,9 +96,14 @@ export default function DashboardPage() {
             
             {/* Left Hero Column */}
             <div className="lg:col-span-7 space-y-4">
-              <div className="inline-flex items-center gap-2 bg-white text-[#1D546C] border border-slate-200 px-3 py-1 rounded-full text-[10px] font-mono font-bold uppercase tracking-wider shadow-2xs">
-                <IconShieldCheck size={14} className="text-emerald-600" />
-                HEALTHCARE RESOURCE INTELLIGENCE
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="inline-flex items-center gap-1.5 bg-white text-[#1D546C] border border-slate-200 px-3 py-1 rounded-full text-[10px] font-mono font-bold uppercase tracking-wider shadow-2xs">
+                  <IconShieldCheck size={14} className="text-emerald-600" />
+                  INDIAN HEALTHCARE NETWORK · NLEM 2022
+                </span>
+                <span className="bg-[#0C2B4E]/5 text-[#0C2B4E] border border-[#0C2B4E]/15 px-2.5 py-0.5 rounded-full text-[9.5px] font-mono font-bold uppercase">
+                  STATE → DISTRICT → PHC/CHC
+                </span>
               </div>
 
               <h1 className="text-3xl md:text-4xl font-black text-[#0C2B4E] tracking-tight leading-tight">
@@ -284,20 +289,27 @@ export default function DashboardPage() {
               {alerts.map((a) => (
                 <div key={a.id || a.alert_code} className="p-4 bg-slate-50 rounded-xl border border-slate-200 space-y-2">
                   <div className="flex items-center justify-between">
-                    <span className={`text-[10px] font-extrabold uppercase px-2 py-0.5 rounded ${
-                      a.severity === "CRITICAL" ? "bg-rose-100 text-rose-800 border border-rose-300" : "bg-amber-100 text-amber-800 border border-amber-300"
-                    }`}>
-                      {a.severity}
-                    </span>
-                    <span className="text-xs font-bold text-[#0C2B4E]">{a.title}</span>
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className={`text-[10px] font-extrabold uppercase px-2 py-0.5 rounded ${
+                        a.severity === "CRITICAL" ? "bg-rose-100 text-rose-800 border border-rose-300" : "bg-amber-100 text-amber-800 border border-amber-300"
+                      }`}>
+                        {a.severity}
+                      </span>
+                      {a.status === "ESCALATED" && (
+                        <span className="text-[9.5px] font-black uppercase px-1.5 py-0.5 rounded bg-rose-100 text-rose-900 border border-rose-300">
+                          ESCALATED TO CDMO
+                        </span>
+                      )}
+                    </div>
+                    <span className="text-xs font-bold text-[#0C2B4E] truncate max-w-[200px]" title={a.title}>{a.title}</span>
                   </div>
                   <p className="text-xs text-slate-600 font-mono">
                     Resource SKU: {a.resource_id} | Impact Date: {a.projected_impact_date || "Immediate"}
                   </p>
                   <div className="pt-2 flex items-center justify-between border-t border-slate-200 text-xs">
                     <span className="text-slate-500">Days of Cover: <strong>{a.days_of_cover || "0.5"} days</strong></span>
-                    <Link href="/forecasts" className="text-[#1D546C] font-bold hover:underline flex items-center gap-0.5">
-                      View Risk <IconArrowRight size={12} />
+                    <Link href={`/alerts?expand=${a.id}`} className="text-[#1D546C] font-bold hover:underline flex items-center gap-0.5">
+                      View Risk &amp; Evidence <IconArrowRight size={12} />
                     </Link>
                   </div>
                 </div>

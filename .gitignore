@@ -8,6 +8,7 @@ __pycache__/
 backend/__pycache__/
 *.db
 *.sqlite3
+*.sqlite
 .pytest_cache/
 .venv/
 .idea/

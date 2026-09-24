@@ -1,17 +1,25 @@
 "use client";
 
-import React, { useState } from "react";
-import { useRouter } from "next/navigation";
+import React, { useState, useEffect, Suspense } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
-import { MOCK_USERS } from "@/config";
+import { MOCK_USERS, UserIdentity } from "@/config";
 import { IconShieldCheck, IconLock, IconUserCheck, IconBuildingHospital, IconArrowRight, IconAlertCircle } from "@tabler/icons-react";
 
-export default function LoginPage() {
+function LoginForm() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const targetRedirect = searchParams.get("redirect") || "/dashboard";
   const { user, login } = useAuth();
-  const [selectedUser, setSelectedUser] = useState(MOCK_USERS[0]);
+  const [selectedUser, setSelectedUser] = useState<UserIdentity>(MOCK_USERS[0]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (user) {
+      router.replace(targetRedirect);
+    }
+  }, [user, router, targetRedirect]);
 
   const handleLoginSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -19,12 +27,12 @@ export default function LoginPage() {
     setError(null);
 
     try {
-      login(selectedUser as any);
+      login(selectedUser);
       setTimeout(() => {
         setLoading(false);
-        router.push("/dashboard");
-      }, 500);
-    } catch (err) {
+        router.push(targetRedirect);
+      }, 400);
+    } catch {
       setLoading(false);
       setError("Authentication failed. Please verify credentials.");
     }
@@ -110,5 +118,17 @@ export default function LoginPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen bg-[#F4F4F4] flex items-center justify-center">
+        <span className="text-xs font-mono font-bold text-[#0C2B4E]">Loading Authentication...</span>
+      </div>
+    }>
+      <LoginForm />
+    </Suspense>
   );
 }

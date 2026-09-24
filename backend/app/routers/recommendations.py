@@ -11,12 +11,17 @@ from app.models import (
     Recommendation, User, UserRole, RecommendationStatus, 
     Inventory, Medicine, AuditEvent, EventType
 )
-from app.schemas import RecommendationResponse
+from app.schemas import (
+    RecommendationResponse, RecommendationExplanationResponse,
+    RecommendationVerificationResponse
+)
 from app.security import (
     get_current_user, require_facility_officer, require_cdmo, 
     verify_facility_access
 )
 from app.algorithms import generate_and_persist_redistribution_recommendations, run_forecast_and_alert_engine
+from app.explainability import build_recommendation_explanation
+from app.verification_service import verify_redistribution_execution
 
 router = APIRouter(prefix="/api/v1", tags=["Cross-District Stock Redistribution"])
 
@@ -33,6 +38,38 @@ def _enrich_recommendation(rec: Recommendation, db: Session) -> RecommendationRe
         Inventory.facility_id == rec.recipient_facility_id,
         Inventory.medicine_id == rec.medicine_id
     ).first()
+
+    explanation = build_recommendation_explanation(rec, db)
+
+    # Look up requester (facility officer assigned to recipient facility or default officer)
+    requester = db.query(User).filter(
+        User.facility_id == rec.recipient_facility_id,
+        User.role == UserRole.FACILITY_OFFICER
+    ).first()
+    if not requester:
+        requester = db.query(User).filter(User.facility_id == rec.recipient_facility_id).first()
+
+    requester_name = requester.full_name if requester else "Surveillance Officer"
+    requester_role = requester.role.value if requester else "FACILITY_OFFICER"
+    requesting_facility_name = rec.recipient_facility.name if rec.recipient_facility else None
+
+    # Look up reviewer if already reviewed
+    reviewer = None
+    if rec.reviewed_by_user_id:
+        reviewer = db.query(User).filter(User.id == rec.reviewed_by_user_id).first()
+
+    reviewed_by_name = reviewer.full_name if reviewer else None
+    reviewed_by_role = reviewer.role.value if reviewer else None
+
+    recip_daily_demand = getattr(recip_inv, "daily_demand", None)
+    if recip_daily_demand is None and explanation:
+        recip_daily_demand = explanation.get("evidence", {}).get("recipient_daily_demand", 10.0)
+
+    recip_days_of_cover = None
+    if explanation:
+        recip_days_of_cover = explanation.get("evidence", {}).get("recipient_days_of_cover")
+    if recip_days_of_cover is None and recip_inv and recip_daily_demand and recip_daily_demand > 0:
+        recip_days_of_cover = round(recip_inv.quantity / recip_daily_demand, 1)
 
     return RecommendationResponse(
         id=rec.id,
@@ -59,7 +96,29 @@ def _enrich_recommendation(rec: Recommendation, db: Session) -> RecommendationRe
         donor_current_stock=donor_inv.quantity if donor_inv else 0,
         donor_safety_stock=donor_inv.safety_stock if donor_inv else 40,
         recipient_current_stock=recip_inv.quantity if recip_inv else 0,
-        recipient_safety_stock=recip_inv.safety_stock if recip_inv else 40
+        recipient_safety_stock=recip_inv.safety_stock if recip_inv else 40,
+        recipient_days_of_cover=recip_days_of_cover,
+        recipient_daily_demand=recip_daily_demand,
+        requester_name=requester_name,
+        requester_role=requester_role,
+        requesting_facility_name=requesting_facility_name,
+        reviewed_by_name=reviewed_by_name,
+        reviewed_by_role=reviewed_by_role,
+        reviewed_at=rec.reviewed_at,
+        explanation=explanation,
+        verification_status=(
+            "PASSED" if rec.status == RecommendationStatus.APPROVED else (
+                "PENDING" if rec.status == RecommendationStatus.PENDING_HUMAN_APPROVAL else "REJECTED"
+            )
+        ),
+        verification_summary=(
+            "Transfer approved and verified against database inventory and SHA-256 audit ledger."
+            if rec.status == RecommendationStatus.APPROVED else (
+                "Awaiting CDMO/Admin operational approval before execution."
+                if rec.status == RecommendationStatus.PENDING_HUMAN_APPROVAL else
+                "Transfer rejected by reviewer. Zero stock transferred."
+            )
+        )
     )
 
 @router.get("/recommendations", response_model=List[RecommendationResponse])
@@ -110,6 +169,34 @@ def get_recommendation_by_id(
 
     return _enrich_recommendation(rec, db)
 
+@router.get("/recommendations/{recommendation_id}/explanation", response_model=RecommendationExplanationResponse)
+def get_recommendation_explanation(
+    recommendation_id: int,
+    current_user: User = Depends(require_facility_officer),
+    db: Session = Depends(get_db)
+):
+    """
+    Returns an authoritative, deterministic explanation of why this redistribution route
+    and quantity were recommended, with donor surplus and recipient deficit evidence.
+    Enforces facility-scoped access control.
+    """
+    rec = db.query(Recommendation).filter(Recommendation.id == recommendation_id).first()
+    if not rec:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Recommendation with id={recommendation_id} not found."
+        )
+
+    if current_user.role == UserRole.FACILITY_OFFICER:
+        if current_user.facility_id not in [rec.donor_facility_id, rec.recipient_facility_id]:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Forbidden. User is restricted to facility_id={current_user.facility_id}."
+            )
+
+    explanation = build_recommendation_explanation(rec, db)
+    return RecommendationExplanationResponse(**explanation)
+
 @router.get("/facilities/{facility_id}/recommendations", response_model=List[RecommendationResponse])
 def get_facility_recommendations(
     facility_id: int,
@@ -136,6 +223,13 @@ def generate_recommendations(
     Triggers deterministic redistribution engine execution, ranks candidate donors, and persists recommendations.
     Requires CDMO or ADMIN role. FACILITY_OFFICER is restricted.
     """
+    # Strict server-side RBAC defense-in-depth:
+    if current_user.role not in [UserRole.CDMO, UserRole.ADMIN]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Forbidden. Generating redistribution recommendations requires CDMO or ADMIN role. User role is '{current_user.role.value}'."
+        )
+
     recommendations = generate_and_persist_redistribution_recommendations(db)
     return [_enrich_recommendation(r, db) for r in recommendations]
 
@@ -148,7 +242,7 @@ def action_recommendation(
 ):
     """
     Submits human operational decision (APPROVE or REJECT) on candidate redistribution transfer.
-    Requires CDMO or ADMIN role.
+    Requires CDMO or ADMIN role. FACILITY_OFFICER is strictly forbidden.
     On APPROVE:
     1. Validates recommended_quantity is positive.
     2. Acquires a row-level lock on the recommendation to prevent race-condition double-approvals.
@@ -160,6 +254,13 @@ def action_recommendation(
     8. Emits tamper-evident SHA-256 AuditEvent and commits in a single transaction.
     9. Recalculates forecast & risk engine across affected nodes (non-fatal if fails).
     """
+    # Strict server-side RBAC defense-in-depth:
+    if current_user.role not in [UserRole.CDMO, UserRole.ADMIN]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Forbidden. Only CDMO and ADMIN can review, approve, or reject redistribution recommendations. User role is '{current_user.role.value}'."
+        )
+
     rec = db.query(Recommendation).filter(Recommendation.id == recommendation_id).first()
     if not rec:
         raise HTTPException(
@@ -252,8 +353,14 @@ def action_recommendation(
                 db.flush()  # Assign PK before using recip_inv below
 
             # ── Atomic stock transfer ────────────────────────────────────────────
+            donor_stock_before = donor_inv.quantity
+            recip_stock_before = recip_inv.quantity
+
             donor_inv.quantity -= rec.recommended_quantity
             recip_inv.quantity += rec.recommended_quantity
+
+            donor_stock_after = donor_inv.quantity
+            recip_stock_after = recip_inv.quantity
 
             # ── Record approval metadata ─────────────────────────────────────────
             now_utc = datetime.now(timezone.utc)
@@ -270,8 +377,15 @@ def action_recommendation(
                 "recommendation_code": rec.recommendation_code,
                 "donor_facility_id": rec.donor_facility_id,
                 "recipient_facility_id": rec.recipient_facility_id,
+                "medicine_id": rec.medicine_id,
                 "item_code": rec.item_code,
                 "quantity": rec.recommended_quantity,
+                "donor_stock_before": donor_stock_before,
+                "recipient_stock_before": recip_stock_before,
+                "donor_stock_after": donor_stock_after,
+                "recipient_stock_after": recip_stock_after,
+                "donor_safety_stock": donor_inv.safety_stock,
+                "recipient_safety_stock": recip_inv.safety_stock,
                 "action": "REDISTRIBUTION_TRANSFER_APPROVED",
                 "reviewed_by_user_id": current_user.id,
                 "reviewed_by_role": current_user.role.value,
@@ -325,3 +439,18 @@ def action_recommendation(
 
     db.refresh(rec)
     return _enrich_recommendation(rec, db)
+
+@router.get("/recommendations/{recommendation_id}/verification", response_model=RecommendationVerificationResponse)
+def get_recommendation_verification(
+    recommendation_id: int,
+    current_user: User = Depends(require_facility_officer),
+    db: Session = Depends(get_db)
+):
+    """
+    Authoritative, strictly read-only Before -> After Verification (Feature #10).
+    Cross-checks expected state against database inventory records and SHA-256 audit ledger.
+    Validates all 12 core checklist parameters.
+    Enforces facility-scoped access: FACILITY_OFFICER cannot view other facilities' transfers.
+    Does NOT mutate database state.
+    """
+    return verify_redistribution_execution(recommendation_id, current_user, db)

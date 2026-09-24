@@ -271,6 +271,20 @@ An authorized **CDMO/Director or System Administrator** can approve or reject el
 
 ---
 
+## 🌐 District & Network Intelligence (Feature #11)
+
+Healysis provides a centralized, database-grounded operational command center for district health officers (CDMO) and state administrators:
+
+- **Network Overview**: Authoritative aggregation of total monitored facilities, active SKUs, safe/warning/critical risk counts, total inventory units, active critical alerts, and pending interventions.
+- **District Risk Breakdown**: Facilities grouped by their real administrative districts (Khordha, Puri, Cuttack, Kolkata, South 24 Parganas) calculating district inventory, daily consumption velocity, resources at risk, and pending actions.
+- **Resource Network Intelligence**: Per-SKU telemetry calculating total stock, network daily demand, network days of cover, deficit nodes, and potential donor facilities.
+- **Deterministic Network Risk Summary**: Explicit condition-based classification (`CRITICAL`, `WARNING`, `STABLE`) with documented criteria (e.g. days of cover thresholds, active alerts) rather than LLM guesswork.
+- **Intervention Priority Queue**: Prioritized operational queue ranking facilities and medicines by urgency to guide district replenishment.
+- **RBAC Boundaries**: Global network visibility for `CDMO` and `ADMIN`; `FACILITY_OFFICER` access is strictly isolated with `HTTP 403 Forbidden`.
+- **Grounded Advisor Integration**: Natural-language operational queries answered via deterministic database tools with zero fabricated numerical values.
+
+---
+
 # 🤖 Google Gemini AI
 
 Healysis integrates **Google Gemini 2.5 Flash** as a grounded operational decision-support assistant.
@@ -509,6 +523,12 @@ Early-warning stockout alerts showing severity, affected facility, resource, pro
 
 Human-approved inter-facility redistribution recommendations with donor/recipient stock, transfer quantity, urgency, and approval controls.
 
+### District & Network Intelligence
+
+![Healysis Network Intelligence](docs/Screenshots/network-intelligence.png)
+
+Aggregated, multi-state healthcare supply chain telemetry providing district-level breakdowns, network risk classification, intervention priorities, and donor/recipient signals.
+
 ---
 
 # 🧰 Technology Stack
@@ -608,7 +628,7 @@ Healysis completed production-readiness and end-to-end QA.
 ## Backend
 
 ```text
-168 / 168 tests passing
+358 / 358 tests passing (100% pass rate)
 ```
 
 Validation included:
@@ -620,9 +640,14 @@ Validation included:
 - Inventory consistency
 - Forecast/risk recalculation
 - Alert reconciliation
-- AI grounding
-- Input validation
+- AI grounding & tool calling
+- Input validation & rate limiting
 - Security regression coverage
+- Notify → Acknowledge → Escalate SLA workflow (Feature #8)
+- Deterministic What-if Simulation (Feature #9)
+- Before → After Verification (Feature #10)
+- District / Network Intelligence (Feature #11)
+- Adversarial QA & Prompt Injection Defense (63 test cases)
 
 ## Frontend
 
@@ -654,6 +679,83 @@ Alerts
       ↓
 Audit Record
 ```
+
+---
+
+# 🛡️ Security Testing & AI Advisor Validation
+
+This section documents the security testing and AI Advisor validation contribution completed and merged into the main branch.
+
+## Authentication & Token Handling
+
+- Valid Firebase-authenticated requests are accepted at protected endpoints.
+- Requests carrying invalid, expired, or absent tokens are rejected with the appropriate HTTP 401 response before reaching any business logic.
+
+## Role-Based Access Control (RBAC)
+
+- RBAC enforcement is applied server-side for all role-restricted operations.
+- Facility Officer accounts cannot access endpoints or perform actions reserved for CDMO/Director or System Administrator roles.
+- Privilege boundaries are enforced at the API layer independently of the frontend.
+
+## Facility-Level Authorization & Isolation
+
+- Facility Officers are scoped to their assigned facility.
+- Cross-facility data access attempts by scoped accounts are rejected.
+- Facility-level isolation is validated across inventory, resource, and operational endpoints.
+
+## AI Advisor — Custom Operational Queries
+
+The AI Advisor pipeline was validated against a range of legitimate operational queries:
+
+| Query Type | Validated Behavior |
+|---|---|
+| Highest stockout risk | Returns verified backend risk data; no invented values |
+| Days of cover remaining | Sourced from deterministic backend calculations |
+| Facilities requiring redistribution | Retrieved from authorized backend state |
+| Resource at lowest stock | Resolved against real inventory records |
+| Forecast and projected stockout questions | Grounded in backend forecast data |
+
+## AI Advisor — Adversarial & Prompt-Injection Queries
+
+The AI Advisor was tested against adversarial inputs including prompt-injection attempts:
+
+- Attempts to override system instructions via user input are handled without exposing internal system prompts or security data.
+- Requests to reveal credentials, API keys, or configuration secrets produce no sensitive disclosure.
+- Requests to approve a redistribution or execute a physical stock transfer are rejected; the Advisor does not possess approval authority.
+- Attempts to bypass RBAC through natural-language framing do not circumvent authorization checks enforced at the backend.
+
+## Inventory Query Handling
+
+- Inventory-level queries return data consistent with verified backend state.
+- The Advisor does not invent stock quantities, safety-stock values, or facility identifiers.
+
+## Inventory Update Interpretation
+
+- The AI Advisor correctly interprets post-transfer inventory states, including updated stock levels, revised days-of-cover, and refreshed risk classifications.
+- Reconciliation of donor and recipient inventory is reflected accurately following an approved transfer.
+
+## Confirmation Workflow
+
+- Redistribution recommendations require an explicit authorized human approval action.
+- Duplicate approval submissions are rejected to prevent double-processing.
+- Rejected recommendations are recorded in the audit ledger without modifying inventory.
+
+## Audit & Security Controls
+
+- All approval and rejection actions produce an audit record.
+- The audit ledger captures the acting user, facility context, action type, and timestamp.
+- Security regression tests verify that authorization boundaries remain intact after inventory and state changes.
+
+## Regression Testing
+
+Security and AI Advisor validation tests are integrated into the backend test suite. All 168 backend tests pass, including coverage of:
+
+- Authentication acceptance and rejection paths
+- RBAC enforcement across roles
+- Facility-level isolation
+- AI Advisor grounding and adversarial-input handling
+- Inventory consistency post-approval
+- Audit record creation
 
 ---
 

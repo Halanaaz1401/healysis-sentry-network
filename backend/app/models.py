@@ -28,13 +28,16 @@ class FacilityType(str, enum.Enum):
 
 class MedicineCategory(str, enum.Enum):
     ESSENTIAL_MEDICINE = "ESSENTIAL_MEDICINE"
+    ANTIBIOTIC = "ANTIBIOTIC"
     VACCINE = "VACCINE"
-    MEDICAL_SUPPLY = "MEDICAL_SUPPLY"
+    IV_FLUID = "IV_FLUID"
+    SURGICAL_SUPPLY = "SURGICAL_SUPPLY"
 
 class ActionType(str, enum.Enum):
     DISPENSE = "DISPENSE"
     RECEIVE = "RECEIVE"
-    SPOILAGE = "SPOILAGE"
+    WASTAGE = "WASTAGE"
+    STOCK_COUNT_ADJUSTMENT = "STOCK_COUNT_ADJUSTMENT"
 
 class PersonnelRole(str, enum.Enum):
     DOCTOR = "DOCTOR"
@@ -57,7 +60,22 @@ class AlertType(str, enum.Enum):
 class AlertStatus(str, enum.Enum):
     ACTIVE = "ACTIVE"
     ACKNOWLEDGED = "ACKNOWLEDGED"
+    ESCALATED = "ESCALATED"
+    MONITORED = "MONITORED"
     RESOLVED = "RESOLVED"
+
+class NotificationChannel(str, enum.Enum):
+    IN_APP = "IN_APP"
+    EMAIL = "EMAIL"
+    SMS = "SMS"
+    PUSH = "PUSH"
+
+class NotificationStatus(str, enum.Enum):
+    UNREAD = "UNREAD"
+    READ = "READ"
+    ACKNOWLEDGED = "ACKNOWLEDGED"
+    ESCALATED = "ESCALATED"
+    DISMISSED = "DISMISSED"
 
 class UrgencyLevel(str, enum.Enum):
     ROUTINE = "ROUTINE"
@@ -133,6 +151,7 @@ class Facility(Base):
     source_requisitions = relationship("Requisition", foreign_keys="Requisition.source_facility_id", back_populates="source_facility")
     target_requisitions = relationship("Requisition", foreign_keys="Requisition.target_facility_id", back_populates="target_facility")
     audit_events = relationship("AuditEvent", back_populates="facility")
+    notifications = relationship("Notification", back_populates="facility", cascade="all, delete-orphan")
 
 
 class Medicine(Base):
@@ -298,6 +317,40 @@ class Alert(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=utc_now, nullable=False)
 
     facility = relationship("Facility", back_populates="alerts")
+    notifications = relationship("Notification", back_populates="alert", cascade="all, delete-orphan")
+
+
+class Notification(Base):
+    """
+    Alert -> Notification Lifecycle (Notify -> Acknowledge -> Escalate)
+    """
+    __tablename__ = "notifications"
+
+    id = Column(Integer, primary_key=True, index=True)
+    notification_code = Column(String(64), unique=True, index=True, nullable=False)
+    alert_id = Column(Integer, ForeignKey("alerts.id", ondelete="CASCADE"), nullable=False, index=True)
+    facility_id = Column(Integer, ForeignKey("facilities.id", ondelete="CASCADE"), nullable=False, index=True)
+    resource_id = Column(String(64), index=True, nullable=True)
+    severity = Column(Enum(AlertSeverity), nullable=False, default=AlertSeverity.WARNING)
+    channel = Column(Enum(NotificationChannel), nullable=False, default=NotificationChannel.IN_APP)
+    recipient_role = Column(Enum(UserRole), nullable=False, default=UserRole.FACILITY_OFFICER)
+    recipient_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    title = Column(String(255), nullable=False)
+    message = Column(Text, nullable=False)
+    status = Column(Enum(NotificationStatus), nullable=False, default=NotificationStatus.UNREAD, index=True)
+    escalation_level = Column(Integer, nullable=False, default=0)
+    escalation_reason = Column(String(255), nullable=True)
+    is_escalated = Column(Boolean, nullable=False, default=False, index=True)
+    escalated_at = Column(DateTime, nullable=True)
+    acknowledged_at = Column(DateTime, nullable=True)
+    acknowledged_by_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=utc_now, nullable=False)
+
+    alert = relationship("Alert", back_populates="notifications")
+    facility = relationship("Facility", back_populates="notifications")
+    recipient_user = relationship("User", foreign_keys=[recipient_user_id])
+    acknowledged_by_user = relationship("User", foreign_keys=[acknowledged_by_user_id])
 
 
 class Recommendation(Base):

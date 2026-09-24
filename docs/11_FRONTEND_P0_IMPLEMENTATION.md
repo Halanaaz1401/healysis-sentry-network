@@ -5,7 +5,7 @@ The Healysis P0 frontend is a Next.js App Router productized healthcare resource
 
 ---
 
-## 2. 7 Primary P0 UI Screens & Routes
+## 2. 10 Primary Healthcare Intelligence Screens & Routes
 
 | Screen # | Screen Title | Route Path | Primary Capabilities & Features |
 |---|---|---|---|
@@ -14,8 +14,11 @@ The Healysis P0 frontend is a Next.js App Router productized healthcare resource
 | **Screen 3** | **Facility / Regional Overview** | `/facilities` | Interactive facility catalog across Odisha (Jatni CHC, UPHC MS Das Cuttack, Pipili PHC) and West Bengal (Behala UPHC Kolkata, Diamond Harbour PHC). Role-scoped filtering for `FACILITY_OFFICER`. |
 | **Screen 4** | **Resource / Inventory Status** | `/resources` | Medicine inventory SKU table (ORS, Paracetamol, Insulin, Amoxicillin, Cetirizine), safety stock levels, daily demand, Days of Cover ($\text{DoC}$), projected stockout dates, and risk severity (`CRITICAL`, `WARNING`, `SAFE`). |
 | **Screen 5** | **Forecast + Risk Engine** | `/forecasts` | Predictive intelligence based on deterministic EWMA ($\alpha=0.3$) demand projection, 7-day velocity, historical depletion dates, and clear callouts distinguishing verified math from AI text. |
-| **Screen 6** | **Redistribution Recommendations** | `/recommendations` | Inter-facility stock transfer routes generated via Haversine distance scoring. Non-autonomous design strictly requiring human approval from authorized CDMO/ADMIN users. |
-| **Screen 7** | **Gemini AI Advisor** | `/advisor` | Grounded decision support chat communicating with `POST /api/v1/advisor/chat`. Displays answer, risk severity, tool evidence payload inspector, data sources, and mandatory human approval disclaimer. |
+| **Screen 6** | **Redistribution Recommendations** | `/recommendations` | Inter-facility stock transfer routes generated via Haversine distance scoring. Non-autonomous design strictly requiring human approval from authorized CDMO/ADMIN users. Includes What-if simulation and Before/After verification. |
+| **Screen 7** | **Early Warning Alerts** | `/alerts` | Operational risk alerts with Notify → Acknowledge → Escalate SLA workflows, deterministic escalation timeout badges, and facility-scoped views. |
+| **Screen 8** | **District / Network Intelligence** | `/network` | Aggregated network-level health, district breakdowns, resource-level network telemetry, intervention priorities, and donor/recipient signals. Restricted to `CDMO`/`ADMIN`. |
+| **Screen 9** | **Gemini AI Advisor** | `/advisor` | Grounded decision support chat communicating with `POST /api/v1/advisor/chat`. Displays answer, risk severity, tool evidence payload inspector, data sources, and mandatory human approval disclaimer. |
+| **Screen 10** | **Audit Ledger** | `/audit` | Cryptographically chained SHA-256 tamper-evident audit ledger displaying all inventory updates, redistribution approvals, and system state transitions. |
 
 ---
 

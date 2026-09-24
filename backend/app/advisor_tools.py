@@ -207,7 +207,81 @@ def get_facility_comparison(facility_ids: List[int], current_user: User, db: Ses
         overview = get_facility_overview(fid, current_user, db)
         if "error" not in overview:
             comparison.append(overview)
-    return comparison
+def get_risk_explanation(facility_id: int, resource_id: str, current_user: User, db: Session) -> Dict[str, Any]:
+    """
+    Backend function tool 7: Returns grounded explainable risk telemetry and deterministic reasoning for a facility resource.
+    """
+    verify_facility_access(facility_id, current_user)
+    alert = db.query(Alert).filter(Alert.facility_id == facility_id, Alert.resource_id == resource_id).first()
+    if alert:
+        from app.explainability import build_risk_explanation_for_alert
+        return build_risk_explanation_for_alert(alert, db)
+    
+    fc = db.query(Forecast).filter(Forecast.facility_id == facility_id, Forecast.item_code == resource_id).first()
+    if fc:
+        from app.explainability import build_risk_explanation_for_forecast
+        return build_risk_explanation_for_forecast(fc, db)
+        
+    return {"error": f"No risk record found for facility_id={facility_id}, resource={resource_id}"}
+
+def get_recommendation_explanation(recommendation_id: int, current_user: User, db: Session) -> Dict[str, Any]:
+    """
+    Backend function tool 8: Returns grounded explainable redistribution route and surplus evidence.
+    """
+    rec = db.query(Recommendation).filter(Recommendation.id == recommendation_id).first()
+    if not rec:
+        return {"error": f"Recommendation #{recommendation_id} not found."}
+    if current_user.role == UserRole.FACILITY_OFFICER:
+        if current_user.facility_id not in [rec.donor_facility_id, rec.recipient_facility_id]:
+            return {"error": "Access forbidden: restricted to assigned facility."}
+    from app.explainability import build_recommendation_explanation
+    return build_recommendation_explanation(rec, db)
+
+def simulate_redistribution_scenario(
+    donor_facility_id: int,
+    recipient_facility_id: int,
+    resource_id: str,
+    transfer_quantity: int,
+    current_user: User,
+    db: Session
+) -> Dict[str, Any]:
+    """
+    Backend function tool 9: Executes a read-only What-If Redistribution Simulation without modifying any database records.
+    """
+    from app.schemas import RedistributionSimulationRequest
+    from app.simulation_service import run_redistribution_simulation
+
+    req = RedistributionSimulationRequest(
+        donor_facility_id=donor_facility_id,
+        recipient_facility_id=recipient_facility_id,
+        item_code=resource_id,
+        transfer_quantity=transfer_quantity
+    )
+    res = run_redistribution_simulation(req, current_user, db)
+    return res.model_dump()
+
+def get_transfer_verification(recommendation_id: int, current_user: User, db: Session) -> Dict[str, Any]:
+    """
+    Backend function tool 10: Returns authoritative, deterministic Before -> After Verification for a redistribution recommendation.
+    Cross-checks database inventory and SHA-256 audit ledger across all 12 parameters without database mutation.
+    """
+    from app.verification_service import verify_redistribution_execution
+    try:
+        res = verify_redistribution_execution(recommendation_id, current_user, db)
+        return res.model_dump(mode="json")
+    except Exception as exc:
+        return {"error": str(exc)}
+
+def get_network_intelligence(current_user: User, db: Session) -> Dict[str, Any]:
+    """
+    Backend function tool 11: Returns authoritative Network and District Intelligence.
+    Strictly read-only.
+    """
+    from app.network_intelligence_service import compute_network_intelligence
+    if current_user.role == UserRole.FACILITY_OFFICER:
+        return {"error": "Access forbidden: Network Intelligence is restricted to CDMO and ADMIN roles."}
+    res = compute_network_intelligence(db)
+    return res.model_dump(mode="json")
 
 TOOL_MAP = {
     "get_facility_overview": get_facility_overview,
@@ -216,4 +290,11 @@ TOOL_MAP = {
     "get_forecasts": get_forecasts,
     "get_redistribution_recommendations": get_redistribution_recommendations,
     "get_facility_comparison": get_facility_comparison,
+    "get_risk_explanation": get_risk_explanation,
+    "get_recommendation_explanation": get_recommendation_explanation,
+    "simulate_redistribution_scenario": simulate_redistribution_scenario,
+    "get_transfer_verification": get_transfer_verification,
+    "get_network_intelligence": get_network_intelligence,
 }
+
+

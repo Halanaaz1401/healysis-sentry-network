@@ -10,8 +10,15 @@ import {
   IconSearch,
   IconFilter,
   IconTable,
-  IconLayoutGrid
+  IconLayoutGrid,
+  IconHelpCircle,
+  IconChevronDown,
+  IconChevronUp,
+  IconInfoCircle,
+  IconShieldCheck,
+  IconArrowRight
 } from "@tabler/icons-react";
+import Link from "next/link";
 
 export default function ForecastsPage() {
   const { user } = useAuth();
@@ -19,6 +26,9 @@ export default function ForecastsPage() {
   const [loading, setLoading] = useState(true);
   const [recalculating, setRecalculating] = useState(false);
   const [banner, setBanner] = useState<{ type: "success" | "error"; msg: string } | null>(null);
+  const [expandedForecasts, setExpandedForecasts] = useState<Record<number, boolean>>({});
+  const [explanations, setExplanations] = useState<Record<number, any>>({});
+  const [explLoading, setExplLoading] = useState<Record<number, boolean>>({});
 
   // Filters
   const [searchQuery, setSearchQuery] = useState("");
@@ -26,6 +36,28 @@ export default function ForecastsPage() {
   const [selectedState, setSelectedState] = useState("ALL");
   const [selectedRisk, setSelectedRisk] = useState("ALL");
   const [viewMode, setViewMode] = useState<"table" | "grid">("table");
+
+  const toggleExpand = async (forecastId: number) => {
+    const nextState = !expandedForecasts[forecastId];
+    setExpandedForecasts(prev => ({ ...prev, [forecastId]: nextState }));
+
+    if (nextState && !explanations[forecastId]) {
+      const forecastItem = forecasts.find(f => f.id === forecastId);
+      if (forecastItem?.explanation) {
+        setExplanations(prev => ({ ...prev, [forecastId]: forecastItem.explanation }));
+      } else {
+        try {
+          setExplLoading(prev => ({ ...prev, [forecastId]: true }));
+          const data = await apiFetch<any>(`/api/v1/forecasts/${forecastId}/explanation`);
+          setExplanations(prev => ({ ...prev, [forecastId]: data }));
+        } catch (err) {
+          console.error("Failed to load forecast explanation:", err);
+        } finally {
+          setExplLoading(prev => ({ ...prev, [forecastId]: false }));
+        }
+      }
+    }
+  };
 
   const fetchForecasts = async () => {
     try {
@@ -199,64 +231,193 @@ export default function ForecastsPage() {
         {viewMode === "table" ? (
           <div className="bg-white rounded-xl border border-slate-200 shadow-2xs overflow-hidden">
             <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs">
+              <table className="w-full text-left text-xs min-w-[980px]">
                 <thead className="bg-slate-50 text-slate-500 font-mono uppercase text-[10px] border-b border-slate-200">
                   <tr>
-                    <th className="p-3.5">Facility Node</th>
-                    <th className="p-3.5">Resource &amp; SKU</th>
-                    <th className="p-3.5">Current Stock</th>
-                    <th className="p-3.5">Daily Demand</th>
-                    <th className="p-3.5">Days of Cover</th>
-                    <th className="p-3.5">Projected Stockout Date</th>
-                    <th className="p-3.5 text-right">Risk Severity</th>
+                    <th className="p-3.5 w-[170px]">Facility Node</th>
+                    <th className="p-3.5 w-[160px]">Resource &amp; SKU</th>
+                    <th className="p-3.5 w-[110px]">Current Stock</th>
+                    <th className="p-3.5 w-[110px]">Daily Demand</th>
+                    <th className="p-3.5 w-[110px]">Days of Cover</th>
+                    <th className="p-3.5 w-[130px]">Projected Stockout</th>
+                    <th className="p-3.5 text-right w-[110px]">Risk Severity</th>
+                    <th className="p-3.5 text-right w-[130px]">Reasoning</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 font-mono">
                   {filteredForecasts.map((f) => {
                     const risk = f.risk_level || (f.days_of_cover < 3 ? "CRITICAL" : f.days_of_cover < 7 ? "WARNING" : "SAFE");
+                    const expl = explanations[f.id] || f.explanation;
+                    const isExpanded = !!expandedForecasts[f.id];
+
                     return (
-                      <tr key={f.id} className="hover:bg-slate-50/50">
-                        <td className="p-3.5">
-                          <strong className="text-[#0C2B4E] font-sans font-bold block">{f.facility_name || `Facility #${f.facility_id}`}</strong>
-                          <span className="text-[10px] text-slate-400">{f.district || "District"}, {f.state || "State"}</span>
-                        </td>
-                        <td className="p-3.5">
-                          <strong className="text-slate-800 font-sans block">{f.item_name || f.item_code}</strong>
-                          <span className="text-[10px] text-slate-500 font-mono">{f.item_code}</span>
-                        </td>
-                        <td className="p-3.5 font-bold text-[#0C2B4E]">
-                          {f.current_stock ?? "—"} <span className="text-[10px] text-slate-400 font-normal">units</span>
-                        </td>
-                        <td className="p-3.5 text-slate-700">
-                          {f.expected_daily_demand} <span className="text-[10px] text-slate-400">/day</span>
-                        </td>
-                        <td className="p-3.5">
-                          <span className="font-black text-[#0C2B4E] text-sm">{f.days_of_cover}</span> <span className="text-[10px] text-slate-400">Days</span>
-                        </td>
-                        <td className="p-3.5 text-slate-600">
-                          {f.projected_stockout_date ? (
-                            <strong className={risk === "CRITICAL" ? "text-rose-700 font-bold" : "text-slate-700"}>
-                              {f.projected_stockout_date}
-                            </strong>
-                          ) : (
-                            <span className="text-emerald-700 text-[11px]">Safe (&gt;= 7d)</span>
-                          )}
-                        </td>
-                        <td className="p-3.5 text-right">
-                          <span className={`text-[10px] font-extrabold uppercase px-2.5 py-1 rounded font-mono inline-block border ${
-                            risk === "CRITICAL" ? "bg-rose-100 text-rose-800 border-rose-300" :
-                            risk === "WARNING" ? "bg-amber-100 text-amber-800 border-amber-300" :
-                            "bg-emerald-100 text-emerald-800 border-emerald-300"
-                          }`}>
-                            {risk === "CRITICAL" ? "CRITICAL RISK" : risk === "WARNING" ? "WARNING" : "SAFE"}
-                          </span>
-                        </td>
-                      </tr>
+                      <React.Fragment key={f.id}>
+                        <tr className="hover:bg-slate-50/50">
+                          <td className="p-3.5">
+                            <strong className="text-[#0C2B4E] font-sans font-bold block">{f.facility_name || `Facility #${f.facility_id}`}</strong>
+                            <span className="text-[10px] text-slate-400">{f.district || "District"}, {f.state || "State"}</span>
+                          </td>
+                          <td className="p-3.5">
+                            <strong className="text-slate-800 font-sans block">{f.item_name || f.item_code}</strong>
+                            <span className="text-[10px] text-slate-500 font-mono">{f.item_code}</span>
+                          </td>
+                          <td className="p-3.5 font-bold text-[#0C2B4E]">
+                            {f.current_stock ?? "—"} <span className="text-[10px] text-slate-400 font-normal">units</span>
+                          </td>
+                          <td className="p-3.5 text-slate-700">
+                            {f.expected_daily_demand} <span className="text-[10px] text-slate-400">/day</span>
+                          </td>
+                          <td className="p-3.5">
+                            <span className="font-black text-[#0C2B4E] text-sm">{f.days_of_cover}</span> <span className="text-[10px] text-slate-400">Days</span>
+                          </td>
+                          <td className="p-3.5 text-slate-600">
+                            {f.projected_stockout_date ? (
+                              <strong className={risk === "CRITICAL" ? "text-rose-700 font-bold" : "text-slate-700"}>
+                                {f.projected_stockout_date}
+                              </strong>
+                            ) : (
+                              <span className="text-emerald-700 text-[11px]">Safe (&gt;= 7d)</span>
+                            )}
+                          </td>
+                          <td className="p-3.5 text-right">
+                            <span className={`text-[10px] font-extrabold uppercase px-2.5 py-1 rounded font-mono inline-block border ${
+                              risk === "CRITICAL" ? "bg-rose-100 text-rose-800 border-rose-300" :
+                              risk === "WARNING" ? "bg-amber-100 text-amber-800 border-amber-300" :
+                              "bg-emerald-100 text-emerald-800 border-emerald-300"
+                            }`}>
+                              {risk === "CRITICAL" ? "CRITICAL RISK" : risk === "WARNING" ? "WARNING" : "SAFE"}
+                            </span>
+                          </td>
+                          <td className="p-3.5 text-right">
+                            <button
+                              onClick={() => toggleExpand(f.id)}
+                              className="bg-blue-50 hover:bg-blue-100 text-[#0C2B4E] border border-blue-200 px-2.5 py-1 rounded-lg font-bold text-[11px] inline-flex items-center gap-1 cursor-pointer transition"
+                              title="View verified evidence and causal reasoning"
+                            >
+                              <IconHelpCircle size={13} className="text-[#1D546C]" />
+                              <span>{isExpanded ? "Hide Reason" : "Why this risk?"}</span>
+                              {isExpanded ? <IconChevronUp size={12} /> : <IconChevronDown size={12} />}
+                            </button>
+                          </td>
+                        </tr>
+
+                        {/* Expandable Evidence & Explainability Drawer */}
+                        {isExpanded && (
+                          <tr key={`exp-${f.id}`} className="bg-blue-50/40 border-b border-slate-200">
+                            <td colSpan={8} className="p-3 sm:p-4">
+                              <div className="bg-white rounded-xl border border-blue-200/80 p-4 shadow-2xs space-y-3 font-mono">
+                                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 pb-2">
+                                  <div className="flex items-center gap-2">
+                                    <IconInfoCircle size={16} className="text-[#1D546C]" />
+                                    <span className="font-bold text-xs text-[#0C2B4E] uppercase tracking-wider">
+                                      Forecast Risk Explainability &amp; Real Telemetry Evidence
+                                    </span>
+                                  </div>
+                                  <span className="text-[10px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded font-bold self-start sm:self-auto">
+                                    {f.facility_name || `Facility #${f.facility_id}`} • {f.item_code}
+                                  </span>
+                                </div>
+
+                                {explLoading[f.id] ? (
+                                  <div className="text-xs text-slate-500 py-3 text-center">Loading verified telemetry...</div>
+                                ) : (
+                                  <>
+                                    {/* Evidence Metrics Grid */}
+                                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 bg-slate-50 p-3 rounded-lg border border-slate-200 text-xs">
+                                      <div>
+                                        <span className="text-[10px] text-slate-500 block uppercase">Current Stock</span>
+                                        <span className="font-bold text-[#0C2B4E]">
+                                          {expl?.evidence?.current_stock ?? f.current_stock ?? "—"} units
+                                        </span>
+                                      </div>
+                                      <div>
+                                        <span className="text-[10px] text-slate-500 block uppercase">Est. Daily Demand</span>
+                                        <span className="font-bold text-slate-800">
+                                          {expl?.evidence?.estimated_daily_demand ?? f.expected_daily_demand} units/day
+                                        </span>
+                                      </div>
+                                      <div>
+                                        <span className="text-[10px] text-slate-500 block uppercase">Days of Cover</span>
+                                        <span className={`font-black ${
+                                          risk === "CRITICAL" ? "text-rose-700" : risk === "WARNING" ? "text-amber-700" : "text-emerald-700"
+                                        }`}>
+                                          {expl?.evidence?.days_of_cover ?? f.days_of_cover} days
+                                        </span>
+                                      </div>
+                                      <div>
+                                        <span className="text-[10px] text-slate-500 block uppercase">Safety Buffer</span>
+                                        <span className="font-bold text-slate-800">
+                                          {expl?.evidence?.safety_stock_threshold ?? (f.safety_stock ?? "—")} units
+                                        </span>
+                                      </div>
+                                      <div>
+                                        <span className="text-[10px] text-slate-500 block uppercase">7-Day Projected Demand</span>
+                                        <span className="font-bold text-slate-800">
+                                          {expl?.evidence?.forecasted_demand_7d ?? (f.expected_daily_demand * 7).toFixed(1)} units
+                                        </span>
+                                      </div>
+                                      <div>
+                                        <span className="text-[10px] text-slate-500 block uppercase">Projected Stockout</span>
+                                        <span className="font-bold text-rose-700">
+                                          {expl?.evidence?.projected_stockout_date ?? f.projected_stockout_date ?? "Safe (>= 7d)"}
+                                        </span>
+                                      </div>
+                                      <div>
+                                        <span className="text-[10px] text-slate-500 block uppercase">Risk Severity</span>
+                                        <span className="font-bold text-[#0C2B4E]">
+                                          {expl?.risk_level || risk}
+                                        </span>
+                                      </div>
+                                      <div>
+                                        <span className="text-[10px] text-slate-500 block uppercase">Verification Status</span>
+                                        <span className="text-emerald-700 font-bold flex items-center gap-1">
+                                          <IconShieldCheck size={13} /> Active DB Evidence
+                                        </span>
+                                      </div>
+                                    </div>
+
+                                    {/* Reasoning & Actions */}
+                                    <div className="space-y-2 text-xs font-sans">
+                                      <div className="bg-amber-50/70 border border-amber-200/80 rounded-lg p-2.5">
+                                        <strong className="text-amber-900 block text-[11px] font-bold uppercase tracking-wider mb-0.5">
+                                          Why this risk is flagged:
+                                        </strong>
+                                        <p className="text-amber-950 leading-relaxed text-xs">
+                                          {expl?.why || "Current inventory is below the configured safety threshold and projected demand indicates insufficient coverage."}
+                                        </p>
+                                      </div>
+
+                                      <div className="bg-blue-50/60 border border-blue-200/80 rounded-lg p-2.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                                        <div>
+                                          <strong className="text-blue-900 block text-[11px] font-bold uppercase tracking-wider mb-0.5">
+                                            Recommended operational action:
+                                          </strong>
+                                          <p className="text-blue-950 text-xs">
+                                            {expl?.recommended_action || "Consider redistribution from a facility with sufficient surplus inventory."}
+                                          </p>
+                                        </div>
+                                        {(risk === "CRITICAL" || risk === "WARNING") && (
+                                          <Link
+                                            href="/recommendations"
+                                            className="bg-[#0C2B4E] hover:bg-[#1A3D64] text-white text-[11px] font-bold px-3 py-1.5 rounded-lg inline-flex items-center gap-1 self-start sm:self-auto whitespace-nowrap transition cursor-pointer"
+                                          >
+                                            Redistribute <IconArrowRight size={12} />
+                                          </Link>
+                                        )}
+                                      </div>
+                                    </div>
+                                  </>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </React.Fragment>
                     );
                   })}
                   {filteredForecasts.length === 0 && (
                     <tr>
-                      <td colSpan={7} className="p-8 text-center text-slate-400 font-sans">
+                      <td colSpan={8} className="p-8 text-center text-slate-400 font-sans">
                         No forecast records match the selected filters.
                       </td>
                     </tr>
@@ -269,6 +430,9 @@ export default function ForecastsPage() {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {filteredForecasts.map((f) => {
               const risk = f.risk_level || (f.days_of_cover < 3 ? "CRITICAL" : f.days_of_cover < 7 ? "WARNING" : "SAFE");
+              const expl = explanations[f.id] || f.explanation;
+              const isExpanded = !!expandedForecasts[f.id];
+
               return (
                 <div key={f.id} className="bg-white p-5 rounded-2xl border border-slate-200 shadow-2xs space-y-4">
                   <div className="flex items-center justify-between border-b border-slate-100 pb-3">
@@ -314,6 +478,67 @@ export default function ForecastsPage() {
                       </strong>
                     </div>
                   </div>
+
+                  {/* Explainability Toggle Button */}
+                  <div className="pt-1">
+                    <button
+                      onClick={() => toggleExpand(f.id)}
+                      className="w-full bg-blue-50 hover:bg-blue-100 text-[#0C2B4E] border border-blue-200 py-1.5 px-3 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 cursor-pointer transition"
+                    >
+                      <IconHelpCircle size={14} className="text-[#1D546C]" />
+                      <span>{isExpanded ? "Hide Reasoning & Evidence" : "Why this risk? (View Evidence)"}</span>
+                      {isExpanded ? <IconChevronUp size={14} /> : <IconChevronDown size={14} />}
+                    </button>
+                  </div>
+
+                  {/* Expanded Explainability Panel in Grid Card */}
+                  {isExpanded && (
+                    <div className="bg-blue-50/40 border border-blue-200 rounded-xl p-3.5 space-y-3 font-sans text-xs">
+                      {explLoading[f.id] ? (
+                        <div className="text-center py-2 text-slate-500 font-mono">Loading verified telemetry...</div>
+                      ) : (
+                        <>
+                          <div className="bg-white p-3 rounded-lg border border-blue-100 space-y-2">
+                            <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider font-mono block">
+                              Authoritative Evidence
+                            </span>
+                            <div className="grid grid-cols-2 gap-2 font-mono text-[11px]">
+                              <div>
+                                <span className="text-slate-400 block text-[10px]">7d Forecast Demand:</span>
+                                <span className="font-bold text-slate-800">
+                                  {expl?.evidence?.forecasted_demand_7d ?? (f.expected_daily_demand * 7).toFixed(1)} units
+                                </span>
+                              </div>
+                              <div>
+                                <span className="text-slate-400 block text-[10px]">Safety Threshold:</span>
+                                <span className="font-bold text-slate-800">
+                                  {expl?.evidence?.safety_stock_threshold ?? (f.safety_stock ?? "—")} units
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="bg-amber-50/70 border border-amber-200/80 rounded-lg p-2.5">
+                            <strong className="text-amber-900 block text-[10px] font-bold uppercase tracking-wider mb-0.5">
+                              Why this risk is flagged:
+                            </strong>
+                            <p className="text-amber-950 text-xs leading-relaxed">
+                              {expl?.why || "Current inventory is below the configured safety threshold and projected demand indicates insufficient coverage."}
+                            </p>
+                          </div>
+
+                          <div className="bg-blue-50/60 border border-blue-200/80 rounded-lg p-2.5">
+                            <strong className="text-blue-900 block text-[10px] font-bold uppercase tracking-wider mb-0.5">
+                              Recommended Action:
+                            </strong>
+                            <p className="text-blue-950 text-xs">
+                              {expl?.recommended_action || "Consider redistribution from a facility with sufficient surplus inventory."}
+                            </p>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  )}
                 </div>
               );
             })}

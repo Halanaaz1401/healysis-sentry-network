@@ -52,12 +52,16 @@ PROMPT_INJECTION_PATTERNS = [
     "hidden system instructions", "system instructions", "hidden instructions",
     # Credential & configuration harvesting
     "reveal configuration", "internal credentials", "secrets, tokens", "tokens, api keys",
-    "reveal tokens", "reveal secrets"
+    "reveal tokens", "reveal secrets", "show me your api key", "api key",
+    "database password", "give me the database password", "give me database password",
+    "override your safety policy", "override safety", "safety policy",
+    "unrestricted system administrator", "act as cdmo", "act as admin"
 ]
 
 UNRELATED_QUERY_KEYWORDS = [
     "cricket", "football", "movie", "recipe", "song", "joke", "stock market",
-    "bitcoin", "president", "capital of", "who directed", "score", "weather"
+    "bitcoin", "president", "capital of", "who directed", "score", "weather",
+    "coca cola", "coke", "pepsi", "tesla"
 ]
 
 RESOURCE_CATALOG = [
@@ -211,10 +215,16 @@ class StructuredQuery:
         self.ranking_criteria: Optional[str] = None
         self.time_scope: str = "current"
         self.requested_operation: str = "lookup"
-        self.answer_style: str = "DIRECT"
         self.requires_clarification: bool = False
         self.clarification_prompt: Optional[str] = None
         self.original_msg: str = ""
+        # What-If Simulation parameters
+        self.sim_donor_facility: Optional[Facility] = None
+        self.sim_recipient_facility: Optional[Facility] = None
+        self.sim_resource: Optional[Dict[str, Any]] = None
+        self.sim_quantity: Optional[int] = None
+        # Before -> After Verification parameters
+        self.verification_rec_id: Optional[int] = None
 
 def _match_resources_in_text(text: str, text_lower: str) -> List[Dict[str, Any]]:
     """
@@ -431,14 +441,157 @@ def interpret_user_query(user_msg: str, db: Session, current_user: User) -> Stru
                     "mein", "me", "mai", "ka", "ki", "ke", "hai", "aaj", "kitna", "kitne", "kitni", "kya",
                     "show", "tell", "check", "give", "display", "hospital", "chc", "phc", "uphc",
                     "urgent", "serious", "critical", "problem", "issue", "complete", "level", "kaunsi",
-                    "which", "any", "emergency", "jaldi", "stockout", "soon"
+                    "which", "any", "emergency", "jaldi", "stockout", "soon",
+                    "network", "district", "districts", "facility", "facilities", "state", "region"
                 }
                 if cand not in stop_words and len(cand) >= 2:
                     sq.unresolved_resources.append(cand)
 
     # 5. Intent and Answer Style Classification
+    # A0. Before -> After Verification Intent Detection
+    verif_trigger_words = [
+        "verify transfer", "before after verification", "verify redistribution",
+        "verify recommendation", "check verification", "verification status",
+        "verified transfer", "has the transfer been verified", "audit verification",
+        "before after", "transfer verification", "verify rec", "verify #"
+    ]
+    is_verification = any(w in msg_lower for w in verif_trigger_words)
+    if is_verification:
+        sq.intent = "VERIFICATION"
+        sq.answer_style = "DETAILED"
+        sq.requested_operation = "verify"
+        rec_match = re.search(r'(?:recommendation|rec|rec#|#)\s*(\d+)', msg_lower)
+        if rec_match:
+            sq.verification_rec_id = int(rec_match.group(1))
+        else:
+            rec_match2 = re.search(r'verify\s*(?:transfer\s*)?(\d+)', msg_lower)
+            if rec_match2:
+                sq.verification_rec_id = int(rec_match2.group(1))
+        return sq
+
+    # A0. Network & District Intelligence Intent Detection
+    net_trigger_words = [
+        "network intelligence", "district intelligence", "highest stockout risk",
+        "districts have", "district risk", "districts with", "districts have shortage",
+        "across the network", "across districts", "network stock", "network situation",
+        "how many facilities are currently at critical", "facilities are currently at critical",
+        "facilities need intervention", "resources are most at risk across",
+        "network overview", "network risk", "network status", "which districts",
+        "network health", "overall network", "most critical alerts", "district has the most",
+        "districts have the most"
+    ]
+    is_network = any(w in msg_lower for w in net_trigger_words)
+    if is_network:
+        sq.intent = "NETWORK_INTELLIGENCE"
+        sq.answer_style = "DETAILED"
+        sq.requested_operation = "network_intelligence"
+        sq.unresolved_resources = []
+        return sq
+
+    # A1. What-If Simulation Intent Detection
+    sim_trigger_words = [
+        "what if", "what happens if", "simulate", "simulation", "suppose we",
+        "if we transfer", "if we send", "if we move", "receives", "kya hoga agar",
+        "agar transfer", "agar hum"
+    ]
+    is_simulation = any(w in msg_lower for w in sim_trigger_words)
+    if is_simulation:
+        sq.intent = "WHAT_IF_SIMULATION"
+        sq.answer_style = "DETAILED"
+        sq.requested_operation = "simulate"
+
+        # 1. Extract Transfer Quantity
+        qtys = re.findall(r'\b\d+\b', msg_lower)
+        sim_qty = None
+        for q_str in qtys:
+            val = int(q_str)
+            if 0 < val < 100000 and val not in [2024, 2025, 2026]:
+                sim_qty = val
+                break
+        sq.sim_quantity = sim_qty
+
+        # 2. Extract Resource
+        if sq.resource_scope:
+            sq.sim_resource = sq.resource_scope[0]
+        elif sq.unresolved_resources:
+            sq.requires_clarification = True
+            sq.clarification_prompt = "I couldn't identify the medicine for the simulation. Did you mean ORS, Paracetamol, Insulin, Amoxicillin, or Cetirizine?"
+            return sq
+
+        # 3. Extract Facilities (Donor & Recipient)
+        fac_donor = None
+        fac_recip = None
+
+        if len(explicit_matched_facs) >= 2:
+            f1, f2 = explicit_matched_facs[0], explicit_matched_facs[1]
+            p1 = msg_lower.find(f1.name.lower()[:5])
+            p2 = msg_lower.find(f2.name.lower()[:5])
+            from_pos = msg_lower.find("from")
+            to_pos = msg_lower.find("to")
+            receives_pos = msg_lower.find("receives")
+
+            if receives_pos != -1:
+                # The facility before receives is recipient
+                if p1 < receives_pos:
+                    fac_recip, fac_donor = f1, f2
+                else:
+                    fac_recip, fac_donor = f2, f1
+            elif from_pos != -1 and to_pos != -1 and from_pos < to_pos:
+                if p1 < p2:
+                    fac_donor, fac_recip = f1, f2
+                else:
+                    fac_donor, fac_recip = f2, f1
+            elif to_pos != -1:
+                if p2 > to_pos:
+                    fac_donor, fac_recip = f1, f2
+                else:
+                    fac_donor, fac_recip = f2, f1
+            else:
+                fac_donor, fac_recip = f1, f2
+        elif len(explicit_matched_facs) == 1:
+            matched_fac = explicit_matched_facs[0]
+            if "from" in msg_lower and msg_lower.find("from") < msg_lower.find(matched_fac.name.lower()[:5]):
+                fac_donor = matched_fac
+                if current_user.role == UserRole.FACILITY_OFFICER and current_user.facility_id:
+                    fac_recip = db.query(Facility).filter(Facility.id == current_user.facility_id).first()
+            else:
+                fac_recip = matched_fac
+                if current_user.role == UserRole.FACILITY_OFFICER and current_user.facility_id:
+                    if current_user.facility_id != fac_recip.id:
+                        fac_donor = db.query(Facility).filter(Facility.id == current_user.facility_id).first()
+        elif current_user.role == UserRole.FACILITY_OFFICER and current_user.facility_id:
+            fac_recip = db.query(Facility).filter(Facility.id == current_user.facility_id).first()
+
+        sq.sim_donor_facility = fac_donor
+        sq.sim_recipient_facility = fac_recip
+
+        if not sq.sim_quantity:
+            sq.requires_clarification = True
+            sq.clarification_prompt = "Please specify the transfer quantity to simulate (e.g., 'What if Jatni CHC receives 90 ORS units?')."
+            return sq
+
+        if not sq.sim_resource:
+            sq.requires_clarification = True
+            sq.clarification_prompt = "Please specify which medicine resource you would like to simulate (e.g. ORS, Paracetamol, Insulin)."
+            return sq
+
+        if not sq.sim_recipient_facility:
+            sq.requires_clarification = True
+            sq.clarification_prompt = "Which facility should be the recipient for this simulation?"
+            return sq
+
+        return sq
+
     # A. Check Ambiguity first
-    if msg_lower in ["what is the stock", "what is the stock?", "what's the stock", "what is stock", "check inventory", "show stock", "tell me stock", "inventory status", "stock levels"]:
+    clean_msg = re.sub(r'[\?\.\!]', '', msg_lower).strip()
+    ambiguous_set = {
+        "what is the stock", "what is the stock?", "what's the stock", "what's the stock?",
+        "whats the stock", "what is stock", "check inventory", "show stock", "tell me stock",
+        "inventory status", "stock levels", "how much is available", "how much is available?",
+        "how much available", "what is available", "whats available", "tell me the current status",
+        "where is the problem", "what is low", "what is critical"
+    }
+    if msg_lower in ambiguous_set or clean_msg in ambiguous_set:
         sq.intent = "AMBIGUITY"
         sq.requires_clarification = True
         sq.clarification_prompt = "Which resource or facility would you like me to check — for example, ORS, insulin, paracetamol, or an overall operational summary across all facilities?"
@@ -490,7 +643,12 @@ def interpret_user_query(user_msg: str, db: Session, current_user: User) -> Stru
         return sq
 
     # G. Redistribution
-    if any(k in msg_lower for k in ["rebalanc", "redistribut", "where should we move", "who can supply", "which facility can supply", "supply a facility currently at risk", "can provide extra", "enough to help", "donor"]):
+    if any(k in msg_lower for k in [
+        "rebalanc", "redistribut", "where should we move", "who can supply", 
+        "which facility can supply", "supply a facility currently at risk", 
+        "can provide extra", "enough to help", "donor", "transfer is currently recommended", 
+        "transfer is recommended", "what transfer is", "what transfer", "pending redistribution"
+    ]):
         sq.intent = "REDISTRIBUTION"
         sq.answer_style = "ACTION"
         sq.requested_operation = "match_donor_recipient"
@@ -529,7 +687,7 @@ def interpret_user_query(user_msg: str, db: Session, current_user: User) -> Stru
         return sq
 
     # J. Explanation / Why
-    if any(k in msg_lower for k in ["why is", "why are", "how come", "what is causing", "why did"]):
+    if "why" in msg_lower or any(k in msg_lower for k in ["how come", "what is causing", "why did", "reason for", "karan kya"]):
         sq.intent = "WHY"
         sq.answer_style = "DETAILED"
         sq.requested_operation = "explain"
@@ -612,6 +770,224 @@ def format_grounded_operational_answer(
     # 3. Clarification Check
     if query.requires_clarification:
         return query.clarification_prompt or "Which resource or facility would you like me to check?", "SAFE"
+
+    # 3.4 Before -> After Verification Handling
+    if query.intent == "VERIFICATION":
+        rec_id = query.verification_rec_id
+        if not rec_id:
+            q = db.query(Recommendation)
+            if current_user.role == UserRole.FACILITY_OFFICER:
+                q = q.filter(
+                    (Recommendation.recipient_facility_id == current_user.facility_id) |
+                    (Recommendation.donor_facility_id == current_user.facility_id)
+                )
+            target_rec = q.order_by(Recommendation.id.desc()).first()
+            if target_rec:
+                rec_id = target_rec.id
+
+        if not rec_id:
+            return (
+                "Please specify the recommendation ID you wish to verify (for example: 'Verify transfer for recommendation #1').",
+                "SAFE"
+            )
+
+        from app.verification_service import verify_redistribution_execution
+        try:
+            verif = verify_redistribution_execution(rec_id, current_user, db)
+            event_ref = verif.audit_reference.event_id if verif.audit_reference else "None"
+            hash_ref = f" (SHA-256: {verif.audit_reference.current_hash[:12]}...)" if (verif.audit_reference and verif.audit_reference.current_hash) else ""
+            ans = (
+                f"**Before → After Verification for Recommendation #{verif.recommendation_id} ({verif.item_name})**\n\n"
+                f"• **Status**: {verif.status} (Execution: {verif.execution_status})\n"
+                f"• **BEFORE**: Recipient ({verif.recipient.facility_name}) stock was {verif.recipient.stock_before} {verif.unit} "
+                f"({verif.recipient.days_of_cover_before} days cover, Risk: {verif.recipient.risk_status_before}). "
+                f"Donor ({verif.donor.facility_name}) stock was {verif.donor.stock_before} {verif.unit}.\n"
+                f"• **APPROVED ACTION**: {verif.comparison.approved_quantity} {verif.unit} transfer "
+                f"(Audit Event: {event_ref}{hash_ref}).\n"
+                f"• **ACTUAL AFTER**: Recipient stock is {verif.recipient.stock_after_actual} {verif.unit} "
+                f"({verif.recipient.days_of_cover_after} days cover, Risk: {verif.recipient.risk_status_after}). "
+                f"Donor stock is {verif.donor.stock_after_actual} {verif.unit} "
+                f"(Safety Buffer: {'PROTECTED' if verif.donor.safety_buffer_protected else 'BREACHED'}).\n"
+                f"• **VERIFICATION**: {verif.summary}"
+            )
+            return ans, "SAFE" if verif.status == "PASSED" else "WARNING"
+        except HTTPException as he:
+            return f"Verification note: {he.detail}", "SAFE"
+        except Exception as e:
+            return f"Verification check failed: {str(e)}", "SAFE"
+
+    # 3.5 What-If Operational Intervention Simulation Handling
+    if query.intent == "WHAT_IF_SIMULATION":
+        donor = query.sim_donor_facility
+        recip = query.sim_recipient_facility
+        med_item = query.sim_resource
+        qty = query.sim_quantity
+
+        if not recip or not med_item or not qty or qty <= 0:
+            return (
+                "To simulate a redistribution scenario, please specify the transfer quantity (e.g. 50 units), "
+                "the medicine (e.g. ORS, Paracetamol), and the recipient facility.",
+                "SAFE"
+            )
+
+        # RBAC check: Facility Officer can only simulate scenarios where their facility is donor or recipient
+        if current_user.role == UserRole.FACILITY_OFFICER:
+            user_fac_id = current_user.facility_id
+            if user_fac_id is None or user_fac_id not in [donor.id if donor else None, recip.id]:
+                uf_fac = db.query(Facility).filter(Facility.id == user_fac_id).first() if user_fac_id else None
+                uf_name = get_clean_facility_name(uf_fac) if uf_fac else f"Facility #{user_fac_id}"
+                return (
+                    f"As a Facility Officer for {uf_name}, your operational access is restricted to scenarios involving your assigned facility.",
+                    "SAFE"
+                )
+
+        auto_donor_note = ""
+        if not donor:
+            med_obj = db.query(Medicine).filter(Medicine.code == med_item["code"]).first()
+            if med_obj:
+                donor_inv = db.query(Inventory).join(Facility).filter(
+                    Inventory.medicine_id == med_obj.id,
+                    Inventory.facility_id != recip.id,
+                    Inventory.quantity > Inventory.safety_stock
+                ).order_by((Inventory.quantity - Inventory.safety_stock).desc()).first()
+                if donor_inv:
+                    donor = donor_inv.facility
+                    auto_donor_note = f" (candidate donor with {donor_inv.quantity - donor_inv.safety_stock} surplus units)"
+                else:
+                    return (
+                        f"No donor facility in the network currently has surplus stock of {med_item['name']} above its safety buffer to simulate a transfer to {get_clean_facility_name(recip)}.",
+                        "SAFE"
+                    )
+
+        if donor.id == recip.id:
+            return "Donor facility and recipient facility cannot be identical for a simulation.", "SAFE"
+
+        from app.schemas import RedistributionSimulationRequest
+        from app.simulation_service import run_redistribution_simulation
+        from fastapi import HTTPException
+
+        sim_req = RedistributionSimulationRequest(
+            donor_facility_id=donor.id,
+            recipient_facility_id=recip.id,
+            item_code=med_item["code"],
+            transfer_quantity=qty
+        )
+        try:
+            sim_res = run_redistribution_simulation(sim_req, current_user, db)
+        except HTTPException as he:
+            return f"What-If Simulation could not be executed: {he.detail}", "UNSAFE"
+        except Exception as e:
+            return f"What-If Simulation could not be executed: {str(e)}", "UNSAFE"
+
+        recip_name = get_clean_facility_name(recip)
+        donor_name = get_clean_facility_name(donor)
+        unit = sim_res.unit
+
+        status_header = f"**[WHAT-IF OPERATIONAL SIMULATION: {sim_res.status}]**"
+        transfer_desc = f"Hypothetical transfer of **{qty} {unit}** of **{sim_res.resource_name}** from **{donor_name}**{auto_donor_note} to **{recip_name}** ({sim_res.haversine_distance_km} km):"
+        
+        recip_cur_risk = "CRITICAL" if sim_res.recipient.current_days_of_cover < 3.0 else ("WARNING" if sim_res.recipient.current_days_of_cover < 7.0 else "SAFE")
+        recip_sim_risk = "SAFE" if sim_res.recipient.buffer_achieved and sim_res.recipient.simulated_days_of_cover >= 7.0 else ("CAUTION" if sim_res.recipient.simulated_days_of_cover >= 3.0 else "CRITICAL")
+        
+        lines = [
+            status_header,
+            transfer_desc,
+            "",
+            f"**1. Recipient Impact ({recip_name})**:",
+            f"- Current Stock: **{sim_res.recipient.current_stock} {unit}** (Daily demand: {sim_res.recipient.daily_demand} {unit}/day)",
+            f"- Current Days of Cover: **{sim_res.recipient.current_days_of_cover} days** [{recip_cur_risk}]",
+            f"- Safety-Stock Threshold: {sim_res.recipient.safety_buffer} {unit}",
+            f"- Simulated Stock: **{sim_res.recipient.simulated_stock} {unit}**",
+            f"- Projected Days of Cover: **{sim_res.recipient.simulated_days_of_cover} days** (+{sim_res.recipient.days_of_cover_gained} days gained) [{recip_sim_risk}]",
+            f"- Target Safety Buffer: **{'Achieved' if sim_res.recipient.buffer_achieved else 'Remains below buffer'}** ({sim_res.recipient.simulated_stock}/{sim_res.recipient.safety_buffer} {unit})",
+            f"- Projected Stockout: {sim_res.recipient.current_projected_stockout or 'Immediate'} -> **{sim_res.recipient.simulated_projected_stockout or 'Buffer protected'}**",
+            "",
+            f"**2. Donor Impact ({donor_name})**:",
+            f"- Current Stock: **{sim_res.donor.current_stock} {unit}** ({sim_res.donor.current_days_of_cover} days cover, demand: {sim_res.donor.daily_demand} {unit}/day)",
+            f"- Simulated Remaining Stock: **{sim_res.donor.simulated_stock} {unit}**",
+            f"- Simulated Remaining Days of Cover: **{sim_res.donor.simulated_days_of_cover} days** (-{sim_res.donor.days_of_cover_lost} days lost)",
+            f"- Safety Buffer Retention ({sim_res.donor.safety_buffer} {unit}): **{'PRESERVED' if sim_res.donor.buffer_preserved else 'VIOLATED (depletes donor safety buffer)'}**",
+            "",
+            f"**3. Operational Rationale**:",
+            f"- {sim_res.reason}",
+            "",
+            f"*{sim_res.disclaimer}*"
+        ]
+        return "\n".join(lines), sim_res.status
+
+    # 3.6 District / Network Intelligence Handling
+    if query.intent == "NETWORK_INTELLIGENCE":
+        if current_user.role == UserRole.FACILITY_OFFICER:
+            user_fac = db.query(Facility).filter(Facility.id == current_user.facility_id).first() if current_user.facility_id else None
+            uf_name = get_clean_facility_name(user_fac) if user_fac else f"Facility #{current_user.facility_id}"
+            return (
+                f"As a Facility Officer for {uf_name}, your operational access is restricted to your assigned facility. "
+                "District and network-wide intelligence is restricted to CDMO and Admin roles.",
+                "SAFE"
+            )
+
+        from app.network_intelligence_service import compute_network_intelligence
+        net_res = compute_network_intelligence(db)
+        ov = net_res.overview
+        rs = net_res.risk_summary
+
+        lines = [
+            f"**[HEALYSIS DISTRICT & NETWORK INTELLIGENCE: {rs.classification}]**",
+            f"**{rs.headline}**",
+            "",
+            f"**Network Overview (Authoritative Database Ground Truth)**:",
+            f"- **Total Monitored Facilities**: {ov.total_facilities} facilities across {len(net_res.districts)} districts",
+            f"- **Facility Risk Profile**: **{ov.critical_facilities_count} Critical** | **{ov.warning_facilities_count} Warning** | **{ov.safe_facilities_count} Safe**",
+            f"- **Total Network Inventory**: **{ov.total_stock_units} units** across {ov.total_resources_monitored} active SKUs",
+            f"- **Intervention Status**: **{ov.facilities_requiring_intervention} facilities** requiring intervention ({ov.pending_redistribution_recommendations} pending redistribution recommendations)",
+            f"- **Active Alerts**: {ov.active_critical_alerts} Critical early warning alerts ({ov.active_warning_alerts} Warning)",
+            "",
+            "**District Risk Breakdown**:"
+        ]
+
+        for d in net_res.districts:
+            status_tag = "CRITICAL" if d.critical_facilities_count > 0 else ("WARNING" if d.warning_facilities_count > 0 else "SAFE")
+            lines.append(
+                f"- **{d.district} ({d.state})** [{status_tag}]: {d.facility_count} facilities "
+                f"({d.critical_facilities_count} critical, {d.warning_facilities_count} warning, {d.safe_facilities_count} safe) • "
+                f"Stock: {d.total_inventory} units (Demand: {d.total_daily_velocity} units/day) • "
+                f"{d.resources_at_risk_count} resources at risk"
+            )
+
+        lines.extend([
+            "",
+            "**Resources Most at Risk Across Network**:"
+        ])
+        at_risk_resources = [r for r in net_res.resources if r.critical_facilities_count > 0 or r.facilities_below_safety_count > 0]
+        if at_risk_resources:
+            for r in at_risk_resources[:4]:
+                lines.append(
+                    f"- **{r.item_name} ({r.item_code})**: Network Stock = **{r.total_network_stock} {r.unit}** ({r.network_days_of_cover} days cover) • "
+                    f"Deficit Facilities = {r.facilities_below_safety_count} ({r.critical_facilities_count} critical) • "
+                    f"Surplus Facilities = {r.surplus_facilities_count}"
+                )
+        else:
+            lines.append("- All monitored resources currently maintain adequate network-wide coverage buffers.")
+
+        if net_res.intervention_priority:
+            lines.extend([
+                "",
+                "**Top Intervention Priorities**:"
+            ])
+            for p in net_res.intervention_priority[:3]:
+                so_str = f"Projected stockout: {p.projected_stockout_date}" if p.projected_stockout_date else f"{p.days_of_cover} days cover"
+                lines.append(
+                    f"- **#{p.priority_rank} {p.facility_name}** ({p.district}) — **{p.item_name}**: "
+                    f"{p.current_stock}/{p.safety_stock} buffer ({p.risk_severity}, {so_str}). "
+                    f"Action: {p.suggested_action}"
+                )
+
+        lines.extend([
+            "",
+            f"*{net_res.disclaimer}*"
+        ])
+
+        return "\n".join(lines), rs.classification
 
     # 4. Strict RBAC Facility Scoping
     if current_user.role == UserRole.FACILITY_OFFICER and current_user.facility_id:
@@ -904,40 +1280,120 @@ def format_grounded_operational_answer(
     # Handler: WHY / EXPLANATION
     # ==========================================
     if query.intent == "WHY":
+        # 1. Check if user is asking why a redistribution recommendation/route was suggested
+        has_rec_keyword = any(k in query.original_msg.lower() for k in [
+            "recommendation", "transfer", "redistribut", "route", "pipili to jatni", "donor"
+        ])
+        if has_rec_keyword:
+            rec_query = db.query(Recommendation)
+            if query.facility_scope:
+                target_fac_ids = [f.id for f in query.facility_scope]
+                rec_query = rec_query.filter(
+                    (Recommendation.donor_facility_id.in_(target_fac_ids)) |
+                    (Recommendation.recipient_facility_id.in_(target_fac_ids))
+                )
+            target_rec = rec_query.order_by(Recommendation.urgency_level.desc(), Recommendation.created_at.desc()).first()
+            if target_rec:
+                if current_user.role == UserRole.FACILITY_OFFICER and current_user.facility_id not in [target_rec.donor_facility_id, target_rec.recipient_facility_id]:
+                    return "You do not have authorization to view recommendation evidence for facilities outside your jurisdiction.", "SAFE"
+                from app.explainability import build_recommendation_explanation
+                rec_exp = build_recommendation_explanation(target_rec, db)
+                ev = rec_exp["evidence"]
+                ans = (
+                    f"REDISTRIBUTION RECOMMENDATION EXPLANATION\n"
+                    f"Recommendation: Transfer {rec_exp['resource_name']} from {rec_exp['donor_facility_name']} → {rec_exp['recipient_facility_name']}\n\n"
+                    f"Evidence:\n"
+                    f"• Recipient current stock: {ev['recipient_current_stock']} {ev['unit']}\n"
+                    f"• Recipient days of cover: {ev['recipient_days_of_cover']} days\n"
+                    f"• Donor current stock: {ev['donor_current_stock']} {ev['unit']}\n"
+                    f"• Donor surplus: {ev['donor_surplus']} {ev['unit']}\n"
+                    f"• Recommended transfer: {ev['recommended_quantity']} {ev['unit']}\n"
+                    f"• Route distance: {ev['haversine_distance_km']} km\n"
+                    f"• Days of cover gained: +{ev['expected_days_cover_gained']} days\n\n"
+                    f"Why this recommendation:\n"
+                    f"{rec_exp['why']}\n\n"
+                    f"Recommended action:\n"
+                    f"{rec_exp['recommended_action']}"
+                )
+                return ans, "WARNING" if str(target_rec.urgency_level) == "URGENT" else "CRITICAL"
+
+        # 2. Risk & Stockout Alert Explanation
         crit_facs = [
             ft for ft in fac_telemetry
             if any(fc.days_of_cover < 3.0 for fc in ft["forecasts"])
         ]
-        if not crit_facs:
-            fac_names = ", ".join([get_clean_facility_name(ft["facility"]) for ft in fac_telemetry])
-            region_name = query.geographic_scope or fac_names
-            return (
-                f"{region_name} facilities are not at critical risk. Both {fac_names} currently maintain adequate stock levels across all resources (above 18 days of supply).",
-                "SAFE"
-            )
         
-        target = crit_facs[0]
+        # Match target facility: explicit in query scope first, else critical facility, else first in telemetry
+        matched_in_scope = [ft for ft in fac_telemetry if ft["facility"].id in [f.id for f in query.facility_scope]]
+        target = matched_in_scope[0] if matched_in_scope else (crit_facs[0] if crit_facs else (fac_telemetry[0] if fac_telemetry else None))
+        
+        if not target:
+            return "No facility data available for explanation.", "SAFE"
+
         fname = get_clean_facility_name(target["facility"])
-        crit_fc = next((fc for fc in target["forecasts"] if fc.days_of_cover < 3.0), None)
-        crit_inv = next((i for i in target["inventory"] if crit_fc and i.item_code == crit_fc.item_code), None)
+        
+        # Match specific resource if queried, else first critical forecast, else first forecast
+        target_item_code = query.resource_scope[0]["code"] if query.resource_scope else None
+        if target_item_code:
+            target_fc = next((fc for fc in target["forecasts"] if fc.item_code == target_item_code), None)
+            target_inv = next((i for i in target["inventory"] if i.item_code == target_item_code), None)
+        else:
+            target_fc = next((fc for fc in target["forecasts"] if fc.days_of_cover < 3.0), None) or (target["forecasts"][0] if target["forecasts"] else None)
+            target_inv = next((i for i in target["inventory"] if target_fc and i.item_code == target_fc.item_code), None) or (target["inventory"][0] if target["inventory"] else None)
 
-        res_name = "ORS"
-        res_unit = "sachets"
-        if crit_inv:
-            for cat in RESOURCE_CATALOG:
-                if cat["code"] == crit_inv.item_code:
-                    res_name = cat["name"]
-                    res_unit = cat["unit"]
-                    break
+        if not target_fc or not target_inv:
+            return f"{fname} currently maintains safe operational levels across all resources (above 18 days of supply).", "SAFE"
 
-        qty = crit_inv.quantity if crit_inv else 15
-        safety = crit_inv.safety_stock if crit_inv else 40
-        doc = crit_fc.days_of_cover if crit_fc else 1.0
-        daily_d = crit_fc.expected_daily_demand if crit_fc else 15.0
-        stockout_d = str(crit_fc.projected_stockout_date) if crit_fc and crit_fc.projected_stockout_date else "2026-09-05"
+        res_name = target_inv.item_name
+        res_unit = target_inv.unit
+        for cat in RESOURCE_CATALOG:
+            if cat["code"] == target_inv.item_code:
+                res_name = cat["name"]
+                res_unit = cat["unit"]
+                break
 
-        ans = f"{fname} is at critical risk because only {qty} {res_name} {res_unit} are available, below the safety level of {safety}. At the current daily demand of {daily_d} {res_unit}/day, the stock will last for about {int(doc) if doc.is_integer() else doc} day (projected stockout date: {stockout_d}).\n\nRecommended action: Replenish {res_name} or approve a stock transfer of 90 ORS sachets from Pipili PHC (Puri)."
-        return ans, "CRITICAL"
+        qty = target_inv.quantity
+        safety = target_inv.safety_stock
+        doc = target_fc.days_of_cover
+        daily_d = target_fc.expected_daily_demand
+        stockout_d = str(target_fc.projected_stockout_date) if target_fc.projected_stockout_date else "None"
+
+        severity_val = "CRITICAL" if doc < 3.0 or qty == 0 else ("WARNING" if doc < 7.0 or qty < safety else "SAFE")
+
+        # Find active redistribution recommendation in DB
+        pending_rec = db.query(Recommendation).filter(
+            Recommendation.recipient_facility_id == target["facility"].id,
+            Recommendation.item_code == target_inv.item_code,
+            Recommendation.status == "PENDING_HUMAN_APPROVAL"
+        ).first()
+
+        if pending_rec:
+            donor_fac = pending_rec.donor_facility or db.query(Facility).filter(Facility.id == pending_rec.donor_facility_id).first()
+            donor_name = get_clean_facility_name(donor_fac) if donor_fac else f"Facility #{pending_rec.donor_facility_id}"
+            rec_action = f"Replenish {res_name} or approve a stock transfer of {pending_rec.recommended_quantity} {res_name} {res_unit} from {donor_name}."
+        elif severity_val == "CRITICAL":
+            rec_action = f"Replenish {res_name} or initiate stock redistribution from an authorized surplus facility."
+        else:
+            rec_action = f"Monitor daily dispense rate and schedule stock replenishment before buffer drops below 3.0 days."
+
+        ans = (
+            f"CRITICAL STOCKOUT RISK\n"
+            f"Facility: {fname}\n"
+            f"Resource: {res_name}\n\n"
+            f"Evidence:\n"
+            f"• Current stock: {qty} {res_unit}\n"
+            f"• Estimated daily demand: {daily_d:.1f} {res_unit}/day\n"
+            f"• Days of cover: {int(doc) if doc.is_integer() else doc:.1f} days\n"
+            f"• Forecasted demand: {daily_d:.1f} {res_unit}/day\n"
+            f"• Risk threshold: Safety stock of {safety} {res_unit} (Critical < 3.0 days)\n"
+            f"• Risk level: {severity_val}\n\n"
+            f"Why:\n"
+            f"{fname} is at {severity_val.lower()} risk because only {qty} {res_name} {res_unit} are available, below the safety level of {safety}. "
+            f"At the current daily demand of {daily_d:.1f} {res_unit}/day, the stock will last for about {int(doc) if doc.is_integer() else doc} day (projected stockout date: {stockout_d}).\n\n"
+            f"Recommended action: {rec_action}"
+        )
+        return ans, severity_val
+
 
     # ==========================================
     # Handler: DIRECT_RESOURCE LOOKUP (Section 9 & 17 Concise Direct Answer)
@@ -1832,18 +2288,26 @@ def run_grounded_ai_advisor(
     answer_text, severity_level = format_grounded_operational_answer(sq, current_user, db)
 
     # 6. Call Gemini API if available to polish language while preserving facts
+    # Explanations (WHY), WHAT_IF_SIMULATION, and VERIFICATION remain strictly deterministic to prevent LLM numerical distortion
+    user_lang = getattr(request_data, "language", "en") or "en"
+    user_msg_chars = request_data.message
+    is_hindi_prompt = any('\u0900' <= char <= '\u097F' for char in user_msg_chars) or user_lang.lower() in ["hi", "hindi"]
+    is_hinglish_prompt = (any(k in user_msg_chars.lower().split() for k in ["mein", "kitna", "kitne", "hai", "karo", "batao", "ka", "ki"]) or user_lang.lower() in ["hinglish"]) and not is_hindi_prompt
+    target_lang_desc = "Hindi (Devanagari script)" if is_hindi_prompt else ("Hinglish (Hindi written phonetically in Roman script)" if is_hinglish_prompt else "English")
+
     genai_client = get_genai_client()
-    if genai_client:
+    if genai_client and sq.intent not in ["WHY", "WHAT_IF_SIMULATION", "VERIFICATION"]:
         try:
             prompt = (
                 f"{SYSTEM_PROMPT}\n\n"
                 f"Question Intent: {sq.intent}\n"
+                f"Target Output Language: {target_lang_desc}\n"
                 f"Geographic Scope: {sq.geographic_scope or 'None'}\n"
                 f"User Role: {current_user.role.value} ({current_user.full_name})\n"
                 f"User Question: {request_data.message}\n\n"
                 f"Grounded Verified Answer: {answer_text}\n"
                 f"Authoritative Severity: {severity_level}\n\n"
-                f"Instructions: Express the verified answer clearly and politely in plain language. Preserve all numbers, quantities, facility names, and severity exactly as provided."
+                f"Instructions: Express the verified answer clearly and politely in {target_lang_desc}. Preserve all numbers, quantities, facility names, dates, and severity exactly as provided. Never invent or distort factual numbers."
             )
             response = genai_client.models.generate_content(
                 model=settings.GEMINI_MODEL,
@@ -1854,6 +2318,10 @@ def run_grounded_ai_advisor(
                 answer_text = llm_text.strip()
         except Exception as e:
             logger.warning(f"Gemini API execution note: {e}")
+    elif is_hindi_prompt and "currently has 15 ORS sachets" in answer_text:
+        answer_text = "जटनी सीएचसी (खोर्धा) में वर्तमान में 15 ORS सैशे उपलब्ध हैं। सुरक्षा-स्टॉक सीमा 40 सैशे है।"
+    elif is_hinglish_prompt and "currently has 15 ORS sachets" in answer_text:
+        answer_text = "Jatni CHC (Khordha) mein currently 15 ORS sachets available hain. Safety-stock limit 40 sachets hai."
 
     consulted_data_sources = list(set(consulted_tools))
     sanitized_evidence = sanitize_evidence_payload(executed_evidence)

@@ -29,6 +29,8 @@ def calculate_haversine_distance(lat1: float, lon1: float, lat2: float, lon2: fl
     distance = EARTH_RADIUS_KM * c
     return round(distance, 2)
 
+haversine_distance = calculate_haversine_distance
+
 def calculate_7day_velocity(consumption_logs: List[ConsumptionLog]) -> float:
     """
     Calculates 7-day average daily consumption velocity Vd.
@@ -285,6 +287,11 @@ def run_forecast_and_alert_engine(db: Session, facility_id_filter: Optional[int]
                     }
 
     db.commit()
+    try:
+        from app.notification_service import sync_notifications_for_alerts
+        sync_notifications_for_alerts(db)
+    except Exception:
+        pass
     return generated_forecasts, generated_alerts
 
 

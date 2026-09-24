@@ -14,6 +14,10 @@ class Settings(BaseSettings):
     TESTING: bool = False
     ALLOW_DEMO_TOKENS: Optional[bool] = None
 
+    # Deterministic Escalation SLA Thresholds (Issue 7: centralized configuration)
+    ESCALATION_CRITICAL_TIMEOUT_MINUTES: int = int(os.getenv("ESCALATION_CRITICAL_TIMEOUT_MINUTES", "15"))
+    ESCALATION_WARNING_TIMEOUT_MINUTES: int = int(os.getenv("ESCALATION_WARNING_TIMEOUT_MINUTES", "60"))
+
     def model_post_init(self, __context: Any) -> None:
         super().model_post_init(__context)
         if self.ALLOW_DEMO_TOKENS is None:

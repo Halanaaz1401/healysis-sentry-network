@@ -7,8 +7,9 @@ Covers:
   - Duplicate approval prevention (already-APPROVED recommendation)
   - Insufficient donor stock rejection (HTTP 400)
   - Zero-quantity recommendation rejection (HTTP 400)
-  - Unauthorized approval by FACILITY_OFFICER (HTTP 403)
+  - Unauthorized approval by FACILITY_OFFICER (HTTP 403, 8-step assertion scenario)
   - REJECT action: status change, no inventory mutation
+  - CDMO and ADMIN authorized approval paths
 """
 import hashlib
 import os
@@ -238,11 +239,6 @@ class TestSuccessfulApproval:
         assert len(evt.current_hash) == 64
         # Verify hash integrity
         prev_hash = evt.previous_hash
-        recomputed = hashlib.sha256(
-            f"{prev_hash}|{rec.donor_facility_id}|{rec.recipient_facility_id}"
-            f"|{rec.item_code}|{rec.recommended_quantity}".encode()
-        ).hexdigest()
-        # Accept prefix match because the hash includes current_user.id suffix
         assert evt.current_hash != prev_hash  # Hash changed
 
     def test_approve_records_actor_and_timestamp(self, db_session):
@@ -373,14 +369,114 @@ class TestInsufficientStock:
 class TestUnauthorizedApproval:
     """FACILITY_OFFICER must not be able to approve recommendations (HTTP 403)."""
 
-    def test_facility_officer_cannot_approve(self, db_session):
-        _, _, _, _, _, rec = _seed_baseline(db_session)
+    def test_facility_officer_full_unauthorized_approval_scenario(self, db_session):
+        """
+        MANDATORY REGRESSION TEST:
+        1. Authenticate as FACILITY_OFFICER.
+        2. Identify an eligible redistribution recommendation.
+        3. Attempt to approve it through the backend API directly.
+        4. Assert HTTP 403.
+        5. Assert inventory is unchanged (donor & recipient).
+        6. Assert no stock movement was created.
+        7. Assert recommendation was not marked approved.
+        8. Assert no approval audit event was created.
+        """
+        fac_donor, fac_recip, med, donor_inv, recip_inv, rec = _seed_baseline(
+            db_session, donor_qty=150, recip_qty=5, rec_qty=50
+        )
+        donor_qty_before = donor_inv.quantity
+        recip_qty_before = recip_inv.quantity
+        audit_count_before = db_session.query(AuditEvent).count()
+
+        # Step 1 & 2 & 3: Attempt direct approval as FACILITY_OFFICER
         res = client.post(
             f"/api/v1/recommendations/{rec.id}/action",
             json={"action": "APPROVE"},
             headers={"Authorization": OFFICER_TOKEN},
         )
+
+        # Step 4: Assert HTTP 403 Forbidden
         assert res.status_code == 403
+        assert "forbidden" in res.json()["detail"].lower()
+
+        # Step 5 & 6: Assert inventory is unchanged, no stock movement created
+        db_session.expire_all()
+        donor_after = db_session.query(Inventory).filter(
+            Inventory.facility_id == fac_donor.id,
+            Inventory.medicine_id == med.id
+        ).first()
+        recip_after = db_session.query(Inventory).filter(
+            Inventory.facility_id == fac_recip.id,
+            Inventory.medicine_id == med.id
+        ).first()
+
+        assert donor_after.quantity == donor_qty_before == 150
+        assert recip_after.quantity == recip_qty_before == 5
+
+        # Step 7: Assert recommendation was not marked approved
+        rec_after = db_session.query(Recommendation).filter(Recommendation.id == rec.id).first()
+        assert rec_after.status == RecommendationStatus.PENDING_HUMAN_APPROVAL
+        assert rec_after.reviewed_by_user_id is None
+        assert rec_after.reviewed_at is None
+
+        # Step 8: Assert no approval audit event was created
+        audit_count_after = db_session.query(AuditEvent).count()
+        assert audit_count_after == audit_count_before
+
+    def test_facility_officer_cannot_reject(self, db_session):
+        """FACILITY_OFFICER cannot reject recommendations either (HTTP 403)."""
+        _, _, _, _, _, rec = _seed_baseline(db_session)
+        audit_count_before = db_session.query(AuditEvent).count()
+
+        res = client.post(
+            f"/api/v1/recommendations/{rec.id}/action",
+            json={"action": "REJECT"},
+            headers={"Authorization": OFFICER_TOKEN},
+        )
+        assert res.status_code == 403
+
+        db_session.expire_all()
+        rec_after = db_session.query(Recommendation).filter(Recommendation.id == rec.id).first()
+        assert rec_after.status == RecommendationStatus.PENDING_HUMAN_APPROVAL
+        assert db_session.query(AuditEvent).count() == audit_count_before
+
+    def test_facility_officer_cannot_generate_recommendations(self, db_session):
+        """FACILITY_OFFICER cannot trigger recommendation generation."""
+        res = client.post(
+            "/api/v1/recommendations/generate",
+            headers={"Authorization": OFFICER_TOKEN},
+        )
+        assert res.status_code == 403
+
+    def test_cdmo_authorized_approval_path_works(self, db_session):
+        """CDMO can successfully approve recommendations."""
+        fac_donor, fac_recip, med, donor_inv, recip_inv, rec = _seed_baseline(
+            db_session, donor_qty=150, recip_qty=5, rec_qty=50
+        )
+        res = client.post(
+            f"/api/v1/recommendations/{rec.id}/action",
+            json={"action": "APPROVE"},
+            headers={"Authorization": CDMO_TOKEN},
+        )
+        assert res.status_code == 200
+        assert res.json()["status"] == "APPROVED"
+
+        db_session.expire_all()
+        rec_after = db_session.query(Recommendation).filter(Recommendation.id == rec.id).first()
+        assert rec_after.status == RecommendationStatus.APPROVED
+
+    def test_admin_authorized_approval_path_works(self, db_session):
+        """ADMIN can also successfully approve recommendations."""
+        fac_donor, fac_recip, med, donor_inv, recip_inv, rec = _seed_baseline(
+            db_session, donor_qty=150, recip_qty=5, rec_qty=50
+        )
+        res = client.post(
+            f"/api/v1/recommendations/{rec.id}/action",
+            json={"action": "APPROVE"},
+            headers={"Authorization": ADMIN_TOKEN},
+        )
+        assert res.status_code == 200
+        assert res.json()["status"] == "APPROVED"
 
     def test_unauthenticated_request_returns_401(self, db_session):
         _, _, _, _, _, rec = _seed_baseline(db_session)

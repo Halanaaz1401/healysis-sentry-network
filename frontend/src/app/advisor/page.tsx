@@ -24,7 +24,10 @@ import {
   IconHistory,
   IconMicrophone,
   IconMicrophoneOff,
-  IconPlayerStop
+  IconPlayerStop,
+  IconVolume,
+  IconVolumeOff,
+  IconLanguage
 } from "@tabler/icons-react";
 
 // =============================================
@@ -171,6 +174,65 @@ export default function AdvisorPage() {
   const recognitionRef = useRef<SpeechRecognitionInstance | null>(null);
   // speechSupported: false on server, set to real detection after mount
   const [speechSupported, setSpeechSupported] = useState<boolean>(false);
+  // Bug 2 fix: language toggle for voice input (en-IN = English/Hinglish, hi-IN = Hindi)
+  const [voiceLang, setVoiceLang] = useState<"en-IN" | "hi-IN">("en-IN");
+  // Bug 1 fix: track the text that was in the input box before the mic was pressed,
+  // and the current interim draft, separately — so we never double-append.
+  const voicePrefixRef = useRef<string>("");
+  const [voiceInterimDraft, setVoiceInterimDraft] = useState<string>("");
+
+  // Multilingual preference: 'en' | 'hi' | 'hinglish'
+  const [advisorLang, setAdvisorLang] = useState<"en" | "hi" | "hinglish">("en");
+  const [speakingMessageId, setSpeakingMessageId] = useState<string | null>(null);
+
+  // Sync advisorLang preference from localStorage post-mount
+  useEffect(() => {
+    try {
+      const savedLang = localStorage.getItem("healysis_advisor_lang") as "en" | "hi" | "hinglish";
+      if (savedLang && ["en", "hi", "hinglish"].includes(savedLang)) {
+        setAdvisorLang(savedLang);
+        setVoiceLang(savedLang === "hi" ? "hi-IN" : "en-IN");
+      }
+    } catch (_) {}
+  }, []);
+
+  const handleSelectLanguage = (lang: "en" | "hi" | "hinglish") => {
+    setAdvisorLang(lang);
+    setVoiceLang(lang === "hi" ? "hi-IN" : "en-IN");
+    try {
+      localStorage.setItem("healysis_advisor_lang", lang);
+    } catch (_) {}
+  };
+
+  const handleSpeakMessage = (msgId: string, text: string) => {
+    if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
+
+    if (speakingMessageId === msgId) {
+      window.speechSynthesis.cancel();
+      setSpeakingMessageId(null);
+      return;
+    }
+
+    window.speechSynthesis.cancel();
+    // Clean markdown/special characters for speech
+    const cleanSpoken = text
+      .replace(/[#*`_~]/g, "")
+      .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+      .trim();
+
+    const utterance = new SpeechSynthesisUtterance(cleanSpoken);
+    if (advisorLang === "hi" || /[\u0900-\u097F]/.test(cleanSpoken)) {
+      utterance.lang = "hi-IN";
+    } else {
+      utterance.lang = "en-IN";
+    }
+
+    utterance.onend = () => setSpeakingMessageId(null);
+    utterance.onerror = () => setSpeakingMessageId(null);
+
+    setSpeakingMessageId(msgId);
+    window.speechSynthesis.speak(utterance);
+  };
 
   // Group conversations by time periods
   const groupConversations = (list: ConversationSummary[]) => {
@@ -366,8 +428,8 @@ export default function AdvisorPage() {
   const sampleQuestions = [
     "Aaj ORS ka stock 180 hai.",
     "Paracetamol stock is 320 and daily demand is 35.",
-    "ORS ka stock 180 kar do.",
     "Why is Jatni CHC at critical risk?",
+    "Why transfer ORS to Jatni CHC?",
     "Which facilities require ORS rebalancing?",
     "List active alerts for West Bengal facilities"
   ];
@@ -419,7 +481,8 @@ export default function AdvisorPage() {
         body: JSON.stringify({
           message: textToSend,
           facility_id: user?.facility_id || undefined,
-          conversation_id: convoId || undefined
+          conversation_id: convoId || undefined,
+          language: advisorLang
         })
       });
 
@@ -548,11 +611,20 @@ export default function AdvisorPage() {
     const recognition: SpeechRecognitionInstance = new SpeechRecognitionCtor();
     recognitionRef.current = recognition;
 
-    // Support English, Hindi, and Hinglish
-    // 'hi-IN' covers Hindi and handles Hinglish reasonably well in Chrome
-    recognition.lang = "hi-IN";
-    recognition.interimResults = false;
-    recognition.maxAlternatives = 3;
+    // Bug 1 fix: snapshot the current input value as the immutable prefix.
+    // All interim and final results are appended to this prefix only,
+    // so onresult can fire multiple times without ever double-appending.
+    const currentInput = inputMessage;
+    voicePrefixRef.current = currentInput;
+    setVoiceInterimDraft("");
+
+    // Bug 2 fix: use the user-selected language (en-IN or hi-IN).
+    recognition.lang = voiceLang;
+    // Bug 1 fix: enable interimResults so we can show a live preview in the
+    // input box. Final results are committed once; interim results only update
+    // the preview and are never permanently appended.
+    recognition.interimResults = true;
+    recognition.maxAlternatives = 1;
     recognition.continuous = false;
 
     recognition.onstart = () => {
@@ -561,43 +633,54 @@ export default function AdvisorPage() {
     };
 
     recognition.onresult = (event: SpeechRecognitionResultEvent) => {
-      setVoiceState("transcribing");
-      // Pick the top-confidence alternative
-      let transcript = "";
-      for (let i = 0; i < event.results.length; i++) {
-        const result = event.results[i];
-        // Use the highest-confidence alternative
-        let bestAlt = result[0];
-        for (let j = 1; j < result.length; j++) {
-          if (result[j].confidence > bestAlt.confidence) {
-            bestAlt = result[j];
-          }
+      // Bug 1 fix: walk only from resultIndex to avoid re-reading earlier results.
+      // Build separate interim and final accumulations from the NEW results only.
+      let interimText = "";
+      let finalText = "";
+
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const segment = event.results[i][0].transcript;
+        if (event.results[i].isFinal) {
+          finalText += segment;
+        } else {
+          interimText += segment;
         }
-        transcript += bestAlt.transcript;
       }
 
-      const trimmed = transcript.trim();
-      if (trimmed) {
-        // Append to any existing typed text (with a space separator if needed)
-        setInputMessage((prev) => {
-          const separator = prev.trim() ? " " : "";
-          return prev.trim() + separator + trimmed;
-        });
+      const prefix = voicePrefixRef.current;
+      const sep = prefix.trim() ? " " : "";
+
+      if (finalText) {
+        // Commit the final text exactly once: prefix + final.
+        // Update the prefix ref so any subsequent result events build on this.
+        const committed = prefix.trim() + sep + finalText.trim();
+        voicePrefixRef.current = committed;
+        setVoiceInterimDraft("");
+        setInputMessage(committed);
         setVoiceState("idle");
         setVoiceError(null);
-      } else {
-        setVoiceState("error");
-        setVoiceError("No speech detected. Please try again or type your message.");
+      } else if (interimText) {
+        // Show interim preview in the input box without committing it.
+        // This is read-only feedback — never permanently written.
+        setVoiceInterimDraft(interimText);
+        setInputMessage(prefix.trim() + sep + interimText.trim());
+        setVoiceState("recording");
       }
     };
 
     recognition.onnomatch = () => {
+      // Restore prefix if nothing matched
+      setInputMessage(voicePrefixRef.current);
+      setVoiceInterimDraft("");
       setVoiceState("error");
       setVoiceError("Speech could not be recognized. Please try again or type your message.");
     };
 
     recognition.onerror = (event: SpeechRecognitionErrEvent) => {
       recognitionRef.current = null;
+      // Restore input to prefix (discard any interim draft)
+      setInputMessage(voicePrefixRef.current);
+      setVoiceInterimDraft("");
       if (event.error === "not-allowed" || event.error === "service-not-allowed") {
         setVoiceState("error");
         setVoiceError("Microphone access was denied. Please allow microphone permissions and try again.");
@@ -621,8 +704,17 @@ export default function AdvisorPage() {
     };
 
     recognition.onend = () => {
-      // If still in recording state after end, transcription happened silently; go idle
-      setVoiceState((prev) => (prev === "recording" ? "idle" : prev));
+      // If we end while still in recording state and no final result arrived,
+      // commit whatever interim text we had (some browsers skip the final event).
+      setVoiceState((prev) => {
+        if (prev === "recording") {
+          // Interim draft (if any) is already shown in inputMessage — keep it as committed.
+          voicePrefixRef.current = inputMessage;
+          setVoiceInterimDraft("");
+          return "idle";
+        }
+        return prev;
+      });
       recognitionRef.current = null;
     };
 
@@ -632,13 +724,15 @@ export default function AdvisorPage() {
       setVoiceState("error");
       setVoiceError("Could not start voice recognition. Please try again.");
     }
-  }, [isSpeechSupported]);
+  }, [isSpeechSupported, voiceLang, inputMessage]);
 
   const handleVoiceStop = useCallback(() => {
     if (recognitionRef.current) {
       try {
         recognitionRef.current.stop();
       } catch (_) {}
+      // Bug 1 fix: go to transcribing while we wait for onresult's final event,
+      // not directly to idle — prevents the input from jumping back to prefix.
       setVoiceState("transcribing");
     }
   }, []);
@@ -711,23 +805,66 @@ export default function AdvisorPage() {
         <div className="w-full bg-white rounded-2xl border border-slate-200 shadow-xs flex flex-col h-[calc(100vh-250px)] min-h-[580px] overflow-hidden justify-between">
           
           {/* Conversation Header */}
-          <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+          <div className="px-5 py-3 border-b border-slate-100 flex flex-wrap items-center justify-between gap-3 bg-slate-50/50">
             <div className="flex items-center gap-2 truncate">
               <IconMessage size={16} className="text-[#1D546C] shrink-0" />
               <h2 className="text-xs font-bold text-[#0C2B4E] truncate">
                 {activeConvo?.title || "New Conversation"}
               </h2>
             </div>
-            {/* HYDRATION FIX: toLocaleTimeString output differs between Node.js (SSR) and
-                browser locale. Suppress the timestamp on the initial render by rendering
-                it only after speechSupported has been evaluated (i.e., after mount).
-                speechSupported is false during SSR and set in a useEffect post-hydration,
-                so using it as a proxy for "mounted" avoids a separate isMounted state. */}
-            {activeConvo && speechSupported && (
-              <span className="text-[10px] text-slate-400 font-mono shrink-0">
-                Last updated {new Date(activeConvo.updated_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-              </span>
-            )}
+
+            {/* Language Selector Controls */}
+            <div className="flex items-center gap-2 shrink-0">
+              <div className="flex items-center bg-white border border-slate-200 rounded-xl p-0.5 shadow-2xs">
+                <div className="flex items-center gap-1 px-2 py-1 text-slate-400">
+                  <IconLanguage size={14} className="text-[#1D546C]" />
+                  <span className="text-[10px] font-bold uppercase font-mono hidden sm:inline">Lang:</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => handleSelectLanguage("en")}
+                  className={`text-[11px] font-bold px-2.5 py-1 rounded-lg transition cursor-pointer ${
+                    advisorLang === "en"
+                      ? "bg-[#0C2B4E] text-white shadow-2xs"
+                      : "text-slate-600 hover:text-slate-900 hover:bg-slate-100"
+                  }`}
+                  title="Query & reply in English"
+                >
+                  English
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleSelectLanguage("hi")}
+                  className={`text-[11px] font-bold px-2.5 py-1 rounded-lg transition cursor-pointer ${
+                    advisorLang === "hi"
+                      ? "bg-[#0C2B4E] text-white shadow-2xs"
+                      : "text-slate-600 hover:text-slate-900 hover:bg-slate-100"
+                  }`}
+                  title="Query & reply in Hindi (हिंदी)"
+                >
+                  हिंदी
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleSelectLanguage("hinglish")}
+                  className={`text-[11px] font-bold px-2.5 py-1 rounded-lg transition cursor-pointer ${
+                    advisorLang === "hinglish"
+                      ? "bg-[#0C2B4E] text-white shadow-2xs"
+                      : "text-slate-600 hover:text-slate-900 hover:bg-slate-100"
+                  }`}
+                  title="Query & reply in Hinglish (Hindi written in Roman script)"
+                >
+                  Hinglish
+                </button>
+              </div>
+
+              {/* HYDRATION FIX: toLocaleTimeString output */}
+              {activeConvo && speechSupported && (
+                <span className="text-[10px] text-slate-400 font-mono hidden md:inline">
+                  {new Date(activeConvo.updated_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                </span>
+              )}
+            </div>
           </div>
 
           {/* Scrollable Message Stream */}
@@ -890,9 +1027,31 @@ export default function AdvisorPage() {
                       </div>
                     )}
 
-                    <span className={`block text-[10px] ${m.sender === "user" ? "text-slate-300" : "text-slate-400"}`}>
-                      {m.timestamp}
-                    </span>
+                    <div className="flex items-center justify-between gap-2 pt-1 text-[10px]">
+                      <span className={m.sender === "user" ? "text-slate-300" : "text-slate-400"}>
+                        {m.timestamp}
+                      </span>
+                      {m.sender === "advisor" && (
+                        <button
+                          type="button"
+                          onClick={() => handleSpeakMessage(m.id, m.answer || m.text)}
+                          className="flex items-center gap-1 font-medium text-[#1D546C] hover:text-[#0C2B4E] bg-slate-100 hover:bg-slate-200 px-2 py-0.5 rounded-md transition cursor-pointer"
+                          title={speakingMessageId === m.id ? "Stop voice readout" : "Read message aloud"}
+                        >
+                          {speakingMessageId === m.id ? (
+                            <>
+                              <IconVolumeOff size={13} className="text-rose-600" />
+                              <span className="text-rose-600 font-bold">Stop</span>
+                            </>
+                          ) : (
+                            <>
+                              <IconVolume size={13} />
+                              <span>Read Aloud</span>
+                            </>
+                          )}
+                        </button>
+                      )}
+                    </div>
                   </div>
                 </div>
               ))
@@ -929,49 +1088,64 @@ export default function AdvisorPage() {
                   set to real value only in useEffect post-hydration.
                   ============================================ */}
               {speechSupported && (
-                <div className="relative flex-shrink-0">
-                  {voiceState === "idle" && (
+                <div className="flex items-start gap-1 flex-shrink-0">
+                  {/* Bug 2 fix: compact EN / हि language toggle — only shown when idle or error */}
+                  {(voiceState === "idle" || voiceState === "error") && (
                     <button
                       type="button"
-                      onClick={handleVoiceStart}
+                      onClick={() => setVoiceLang((l) => l === "en-IN" ? "hi-IN" : "en-IN")}
                       disabled={loading}
-                      title="Tap to speak (English / Hindi / Hinglish)"
-                      className="h-[38px] w-[38px] flex items-center justify-center rounded-xl bg-slate-100 hover:bg-blue-50 text-slate-500 hover:text-[#1D546C] border border-slate-200 hover:border-blue-200 transition disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                      title={voiceLang === "en-IN" ? "Voice language: English / Hinglish — click for Hindi" : "Voice language: Hindi — click for English / Hinglish"}
+                      className="h-[38px] px-2 flex items-center justify-center rounded-xl bg-slate-100 hover:bg-slate-200 border border-slate-200 text-[10px] font-bold text-slate-600 transition disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer select-none"
                     >
-                      <IconMicrophone size={17} />
+                      {voiceLang === "en-IN" ? "EN" : "हि"}
                     </button>
                   )}
 
-                  {voiceState === "recording" && (
-                    <button
-                      type="button"
-                      onClick={handleVoiceStop}
-                      title="Stop recording"
-                      className="h-[38px] w-[38px] flex items-center justify-center rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-300 animate-pulse transition cursor-pointer"
-                    >
-                      <IconPlayerStop size={17} />
-                    </button>
-                  )}
+                  <div className="relative">
+                    {voiceState === "idle" && (
+                      <button
+                        type="button"
+                        onClick={handleVoiceStart}
+                        disabled={loading}
+                        title={`Tap to speak in ${voiceLang === "en-IN" ? "English / Hinglish" : "Hindi"}`}
+                        className="h-[38px] w-[38px] flex items-center justify-center rounded-xl bg-slate-100 hover:bg-blue-50 text-slate-500 hover:text-[#1D546C] border border-slate-200 hover:border-blue-200 transition disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                      >
+                        <IconMicrophone size={17} />
+                      </button>
+                    )}
 
-                  {voiceState === "transcribing" && (
-                    <div
-                      title="Transcribing..."
-                      className="h-[38px] w-[38px] flex items-center justify-center rounded-xl bg-amber-50 text-amber-600 border border-amber-200"
-                    >
-                      <IconLoader size={17} className="animate-spin" />
-                    </div>
-                  )}
+                    {voiceState === "recording" && (
+                      <button
+                        type="button"
+                        onClick={handleVoiceStop}
+                        title="Stop recording"
+                        className="h-[38px] w-[38px] flex items-center justify-center rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-300 animate-pulse transition cursor-pointer"
+                      >
+                        <IconPlayerStop size={17} />
+                      </button>
+                    )}
 
-                  {voiceState === "error" && (
-                    <button
-                      type="button"
-                      onClick={handleVoiceDismissError}
-                      title={voiceError || "Voice input error. Click to dismiss."}
-                      className="h-[38px] w-[38px] flex items-center justify-center rounded-xl bg-rose-100 text-rose-600 border border-rose-300 transition cursor-pointer hover:bg-rose-200"
-                    >
-                      <IconMicrophoneOff size={17} />
-                    </button>
-                  )}
+                    {voiceState === "transcribing" && (
+                      <div
+                        title="Transcribing..."
+                        className="h-[38px] w-[38px] flex items-center justify-center rounded-xl bg-amber-50 text-amber-600 border border-amber-200"
+                      >
+                        <IconLoader size={17} className="animate-spin" />
+                      </div>
+                    )}
+
+                    {voiceState === "error" && (
+                      <button
+                        type="button"
+                        onClick={handleVoiceDismissError}
+                        title={voiceError || "Voice input error. Click to dismiss."}
+                        className="h-[38px] w-[38px] flex items-center justify-center rounded-xl bg-rose-100 text-rose-600 border border-rose-300 transition cursor-pointer hover:bg-rose-200"
+                      >
+                        <IconMicrophoneOff size={17} />
+                      </button>
+                    )}
+                  </div>
                 </div>
               )}
 
@@ -988,7 +1162,7 @@ export default function AdvisorPage() {
                 {voiceState === "recording" && (
                   <p className="text-[10px] text-rose-600 font-mono px-1 flex items-center gap-1">
                     <span className="inline-block w-1.5 h-1.5 rounded-full bg-rose-500 animate-ping" />
-                    Recording... speak in English, Hindi, or Hinglish. Click ■ to stop.
+                    {voiceLang === "en-IN" ? "Recording in English / Hinglish" : "Recording in Hindi"} — click ■ to stop.
                   </p>
                 )}
                 {voiceState === "transcribing" && (

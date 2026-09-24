@@ -44,25 +44,31 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           localStorage.setItem("healysis_user", JSON.stringify(updated));
           return updated;
         });
+      } else if (res.status === 401) {
+        // Token expired or invalid; clear session
+        setUser(null);
+        localStorage.removeItem("healysis_user");
       }
-    } catch (e) {
+    } catch {
       // Backend offline or unreachable during initial load; retain local state
     }
   };
 
   useEffect(() => {
-    let initialUser = MOCK_USERS[0];
-    const saved = localStorage.getItem("healysis_user");
+    let initialUser: UserIdentity | null = null;
+    const saved = typeof window !== "undefined" ? localStorage.getItem("healysis_user") : null;
     if (saved) {
       try {
         initialUser = JSON.parse(saved);
-      } catch (e) {
-        initialUser = MOCK_USERS[0];
+      } catch {
+        initialUser = null;
       }
     }
     setUser(initialUser);
     setLoading(false);
-    syncWithBackend(initialUser);
+    if (initialUser) {
+      syncWithBackend(initialUser);
+    }
   }, []);
 
   const login = (newUser: UserIdentity) => {
@@ -76,11 +82,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     localStorage.removeItem("healysis_user");
   };
 
-  const getAuthHeaders = () => {
-    return {
-      "Content-Type": "application/json",
-      "Authorization": user?.token || MOCK_USERS[0].token
+  const getAuthHeaders = (): Record<string, string> => {
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json"
     };
+    if (user?.token) {
+      headers["Authorization"] = user.token.startsWith("Bearer ") ? user.token : `Bearer ${user.token}`;
+    }
+    return headers;
   };
 
   return (

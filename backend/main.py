@@ -1,10 +1,12 @@
 import os
+import asyncio
 import pathlib
 import time
 import uuid
 import logging
 from collections import defaultdict
 from typing import Callable, Union, List
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request, Depends, status
 from fastapi.responses import JSONResponse
@@ -13,14 +15,36 @@ from dotenv import load_dotenv
 
 from app.config import settings
 from app.database import get_db
-from app.routers import auth, forecasts, alerts, recommendations, advisor, facilities, resources, audit
+from app.routers import (
+    auth, forecasts, alerts, recommendations, advisor, facilities, resources,
+    audit, notifications, simulations, network_intelligence
+)
 
 BASE_DIR = pathlib.Path(__file__).resolve().parent
 load_dotenv(dotenv_path=BASE_DIR / ".env", override=True)
 
 logger = logging.getLogger("healysis.api")
 
-from contextlib import asynccontextmanager
+async def automated_escalation_worker():
+    """
+    Deterministic In-Process Background Escalation Worker.
+    Periodically evaluates unacknowledged alerts against configured SLA response thresholds.
+    Zero external messaging infrastructure required; fully compatible with Cloud Run.
+    """
+    from app.database import SessionLocal
+    from app.notification_service import escalate_unacknowledged_alerts
+    while True:
+        try:
+            await asyncio.sleep(60)
+            db = SessionLocal()
+            try:
+                escalate_unacknowledged_alerts(db)
+            finally:
+                db.close()
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.warning(f"Background automated escalation runner note: {e}")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -32,7 +56,21 @@ async def lifespan(app: FastAPI):
             seed_database()
         except Exception as e:
             logger.warning(f"Startup database seeding note: {e}")
-    yield
+
+    worker_task = None
+    if not settings.TESTING:
+        worker_task = asyncio.create_task(automated_escalation_worker())
+
+    try:
+        yield
+    finally:
+        if worker_task:
+            worker_task.cancel()
+            try:
+                await worker_task
+            except asyncio.CancelledError:
+                pass
+
 
 # Configure FastAPI application with conditional OpenAPI documentation
 app = FastAPI(
@@ -155,6 +193,9 @@ app.include_router(alerts.router)
 app.include_router(recommendations.router)
 app.include_router(advisor.router)
 app.include_router(audit.router)
+app.include_router(notifications.router)
+app.include_router(simulations.router)
+app.include_router(network_intelligence.router)
 
 @app.get("/")
 def health_check(request: Request):
