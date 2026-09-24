@@ -86,6 +86,22 @@ declare global {
   }
 }
 
+interface MultimodalAnalysisResponse {
+  filename: string;
+  detected_medicine?: string;
+  detected_medicine_code?: string;
+  detected_quantity?: number;
+  unit?: string;
+  batch_number?: string;
+  expiry_date?: string;
+  confidence_score: number;
+  analysis_notes: string;
+  is_nlem_matched: boolean;
+  requires_human_approval: boolean;
+  advisory_disclaimer: string;
+  suggested_intake_prompt?: string;
+}
+
 interface PendingInventoryUpdate {
   facility_id: number;
   facility_name: string;
@@ -130,6 +146,7 @@ interface ChatMessage {
   update_cancelled?: boolean;
   confirming?: boolean;
   confirm_error?: string;
+  multimodal_result?: MultimodalAnalysisResponse;
 }
 
 interface ConversationSummary {
@@ -204,35 +221,220 @@ export default function AdvisorPage() {
     } catch (_) {}
   };
 
+  const [availableVoices, setAvailableVoices] = useState<SpeechSynthesisVoice[]>([]);
+  const speechQueueRef = useRef<SpeechSynthesisUtterance[]>([]);
+  const isSpeakingRef = useRef<boolean>(false);
+
+  // Load and cache voices when SpeechSynthesis is available
+  useEffect(() => {
+    if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
+
+    const loadVoices = () => {
+      const v = window.speechSynthesis.getVoices();
+      if (v && v.length > 0) {
+        setAvailableVoices(v);
+      }
+    };
+
+    loadVoices();
+    window.speechSynthesis.onvoiceschanged = loadVoices;
+
+    return () => {
+      if (typeof window !== "undefined" && "speechSynthesis" in window) {
+        window.speechSynthesis.cancel();
+      }
+    };
+  }, []);
+
+  // Text Normalizer for Natural Clinical Speech (Requirement 5)
+  const normalizeTextForSpeech = (rawText: string, lang: "en" | "hi" | "hinglish"): string => {
+    let text = rawText;
+
+    // 1. Remove markdown code blocks, backticks, bold, italics, strikethrough, headers
+    text = text.replace(/```[\s\S]*?```/g, " ");
+    text = text.replace(/`([^`]+)`/g, "$1");
+    text = text.replace(/#{1,6}\s+/g, "");
+    text = text.replace(/\*\*([^*]+)\*\*/g, "$1");
+    text = text.replace(/\*([^*]+)\*/g, "$1");
+    text = text.replace(/~~([^~]+)~~/g, "$1");
+
+    // 2. Markdown links [label](url) -> label
+    text = text.replace(/\[([^\]]+)\]\([^)]+\)/g, "$1");
+
+    // 3. Bullets, arrows, pipes, decorative dashes
+    text = text.replace(/^[•*\-+]\s+/gm, "");
+    text = text.replace(/[→⇒]/g, " to ");
+    text = text.replace(/—/g, ", ");
+    text = text.replace(/\|/g, ", ");
+
+    // 4. SKU & Technical Identifier normalizations
+    text = text.replace(/\bMED-ORS-SACHET\b/gi, "O R S sachet");
+    text = text.replace(/\bMED-PARACET-500MG\b/gi, "Paracetamol 500 milligram");
+    text = text.replace(/\bMED-INSULIN-100IU\b/gi, "Insulin 100 International Units");
+    text = text.replace(/\bMED-AMOXICILLIN-250\b/gi, "Amoxicillin 250 milligram");
+    text = text.replace(/\bMED-CETIRIZINE-10\b/gi, "Cetirizine 10 milligram");
+
+    // 5. Healthcare Facility Acronyms
+    text = text.replace(/\bCHC\b/g, "C H C");
+    text = text.replace(/\bPHC\b/g, "P H C");
+    text = text.replace(/\bUPHC\b/g, "Urban P H C");
+    text = text.replace(/\bDHH\b/g, "District Hospital");
+    text = text.replace(/\bCDMO\b/g, "C D M O");
+    text = text.replace(/\bNLEM\b/g, "N L E M");
+
+    // 6. Metrics, Ratios and Quantities
+    text = text.replace(/(\d+)\/(\d+)\s*SS\b/gi, "$1 out of $2 safety stock");
+    text = text.replace(/(\d+)\/(\d+)/g, "$1 out of $2");
+    text = text.replace(/\bunits\/day\b/gi, "units per day");
+    text = text.replace(/\b(\d+)\s*km\b/gi, "$1 kilometers");
+    text = text.replace(/\b\+(\d+)d\s+cover\b/gi, "plus $1 days of cover");
+    text = text.replace(/\b(\d+)d\s+cover\b/gi, "$1 days of cover");
+    text = text.replace(/%/g, " percent");
+
+    // 7. Clean up extra punctuation clusters & whitespace
+    text = text.replace(/\s+/g, " ").trim();
+
+    return text;
+  };
+
+  // Best Natural Voice Picker (Requirements 2 & 3)
+  const getBestNaturalVoice = useCallback((targetLang: "en" | "hi" | "hinglish", text: string): { voice: SpeechSynthesisVoice | null; bcp47: string } => {
+    if (typeof window === "undefined" || !("speechSynthesis" in window)) {
+      return { voice: null, bcp47: "en-US" };
+    }
+
+    const voices = availableVoices.length > 0 ? availableVoices : window.speechSynthesis.getVoices();
+    const hasDevanagari = /[\u0900-\u097F]/.test(text);
+
+    // Case A: Hindi requested or Devanagari script present
+    if (targetLang === "hi" || hasDevanagari) {
+      const googleHindi = voices.find(v => v.name.includes("Google") && (v.lang === "hi-IN" || v.lang.startsWith("hi")));
+      if (googleHindi) return { voice: googleHindi, bcp47: "hi-IN" };
+
+      const msNaturalHindi = voices.find(v => (v.name.includes("Natural") || v.name.includes("Online")) && (v.lang === "hi-IN" || v.lang.startsWith("hi")));
+      if (msNaturalHindi) return { voice: msNaturalHindi, bcp47: "hi-IN" };
+
+      const anyHindi = voices.find(v => v.lang === "hi-IN" || v.lang.startsWith("hi"));
+      if (anyHindi) return { voice: anyHindi, bcp47: "hi-IN" };
+    }
+
+    // Case B: Hinglish requested
+    if (targetLang === "hinglish") {
+      if (hasDevanagari) {
+        const googleHindi = voices.find(v => v.name.includes("Google") && (v.lang === "hi-IN" || v.lang.startsWith("hi")));
+        if (googleHindi) return { voice: googleHindi, bcp47: "hi-IN" };
+      }
+      // For Romanized Hinglish: prefer natural Indian English voice (accurate Indian phonemes)
+      const indianVoice = voices.find(v => (v.name.includes("Google") || v.name.includes("Natural") || v.name.includes("Online")) && v.lang === "en-IN");
+      if (indianVoice) return { voice: indianVoice, bcp47: "en-IN" };
+
+      const anyIndianVoice = voices.find(v => v.lang === "en-IN");
+      if (anyIndianVoice) return { voice: anyIndianVoice, bcp47: "en-IN" };
+
+      // Fallback for Hinglish if no Indian English voice is installed
+      const googleEn = voices.find(v => v.name === "Google US English" || v.name === "Google UK English Female" || (v.name.includes("Google") && v.lang.startsWith("en")));
+      if (googleEn) return { voice: googleEn, bcp47: "en-IN" };
+    }
+
+    // Case C: Standard English
+    const googleEn = voices.find(v => v.name === "Google US English" || v.name === "Google UK English Female" || (v.name.includes("Google") && v.lang.startsWith("en")));
+    if (googleEn) return { voice: googleEn, bcp47: googleEn.lang || "en-US" };
+
+    const msNaturalEn = voices.find(v => (v.name.includes("Natural") || v.name.includes("Online")) && v.lang.startsWith("en"));
+    if (msNaturalEn) return { voice: msNaturalEn, bcp47: msNaturalEn.lang || "en-US" };
+
+    const anyEn = voices.find(v => v.lang.startsWith("en"));
+    if (anyEn) return { voice: anyEn, bcp47: anyEn.lang || "en-US" };
+
+    return { voice: null, bcp47: "en-US" };
+  }, [availableVoices]);
+
+  // Robust Sequential Speech Player (Requirements 4, 6, 7)
   const handleSpeakMessage = (msgId: string, text: string) => {
     if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
 
+    // 1. If currently speaking this message, toggle OFF
     if (speakingMessageId === msgId) {
       window.speechSynthesis.cancel();
+      speechQueueRef.current = [];
+      isSpeakingRef.current = false;
       setSpeakingMessageId(null);
       return;
     }
 
+    // 2. Stop any existing playback before starting new one (Rapid clicking protection - Req 7.F)
     window.speechSynthesis.cancel();
-    // Clean markdown/special characters for speech
-    const cleanSpoken = text
-      .replace(/[#*`_~]/g, "")
-      .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
-      .trim();
+    speechQueueRef.current = [];
+    isSpeakingRef.current = false;
 
-    const utterance = new SpeechSynthesisUtterance(cleanSpoken);
-    if (advisorLang === "hi" || /[\u0900-\u097F]/.test(cleanSpoken)) {
-      utterance.lang = "hi-IN";
-    } else {
-      utterance.lang = "en-IN";
-    }
+    // 3. Normalize text safely
+    const cleanSpoken = normalizeTextForSpeech(text, advisorLang);
+    if (!cleanSpoken) return;
 
-    utterance.onend = () => setSpeakingMessageId(null);
-    utterance.onerror = () => setSpeakingMessageId(null);
+    // 4. Select best natural voice
+    const { voice, bcp47 } = getBestNaturalVoice(advisorLang, cleanSpoken);
 
+    // 5. Chunk into sentences (Avoids Chrome 15s freeze & provides natural cadence - Req 4 & 7.E)
+    const rawSentences = cleanSpoken.match(/[^.!?।\n]+[.!?।\n]+|[^.!?।\n]+$/g) || [cleanSpoken];
+    const sentences = rawSentences.map(s => s.trim()).filter(s => s.length > 0);
+
+    if (sentences.length === 0) return;
+
+    // 6. Build sentence utterances
+    const utterances: SpeechSynthesisUtterance[] = sentences.map((sentence, idx) => {
+      const u = new SpeechSynthesisUtterance(sentence);
+      if (voice) {
+        u.voice = voice;
+      }
+      u.lang = bcp47;
+
+      // Natural conversational cadence:
+      // Calm, clear, measured rate (0.98 for Google voices, 0.95 for system voices)
+      u.rate = voice && voice.name.includes("Google") ? 0.98 : 0.95;
+      u.pitch = 1.0;
+      u.volume = 1.0;
+
+      return u;
+    });
+
+    // 7. Chain utterances sequentially
+    utterances.forEach((u, i) => {
+      if (i < utterances.length - 1) {
+        u.onend = () => {
+          // Play next sentence if not cancelled
+          if (isSpeakingRef.current && i + 1 < speechQueueRef.current.length) {
+            window.speechSynthesis.speak(speechQueueRef.current[i + 1]);
+          }
+        };
+      } else {
+        // Last sentence
+        u.onend = () => {
+          isSpeakingRef.current = false;
+          speechQueueRef.current = [];
+          setSpeakingMessageId(null);
+        };
+      }
+
+      u.onerror = (err) => {
+        // Interrupted/canceled errors happen normally when Stop is clicked
+        if (err.error !== "canceled" && err.error !== "interrupted") {
+          console.warn("Speech synthesis notice:", err.error);
+        }
+        isSpeakingRef.current = false;
+        speechQueueRef.current = [];
+        setSpeakingMessageId(null);
+      };
+    });
+
+    speechQueueRef.current = utterances;
+    isSpeakingRef.current = true;
     setSpeakingMessageId(msgId);
-    window.speechSynthesis.speak(utterance);
+
+    // Speak first chunk
+    window.speechSynthesis.speak(utterances[0]);
   };
+
+
 
   // Group conversations by time periods
   const groupConversations = (list: ConversationSummary[]) => {
@@ -925,6 +1127,69 @@ export default function AdvisorPage() {
                   }`}>
                     <p className="leading-relaxed whitespace-pre-wrap">{m.text}</p>
 
+                    {/* Gemini Multimodal Vision Analysis Card */}
+                    {m.multimodal_result && (
+                      <div className="mt-3 pt-3 border-t border-slate-200">
+                        <div className="bg-white rounded-xl border border-blue-200 shadow-xs p-4 space-y-3 text-slate-800">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-1.5 text-[#0C2B4E] font-bold text-xs">
+                              <IconSparkles size={16} className="text-blue-600" />
+                              <span>Gemini 2.5 Flash Multimodal Vision</span>
+                            </div>
+                            <span className="text-[10px] font-bold uppercase tracking-wider bg-blue-100 text-blue-900 border border-blue-300 px-2 py-0.5 rounded-full">
+                              Confidence: {(m.multimodal_result.confidence_score * 100).toFixed(0)}%
+                            </span>
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-2 text-[11px] bg-slate-50 p-3 rounded-lg border border-slate-200 font-mono">
+                            <div>
+                              <span className="text-slate-500 block text-[10px] uppercase font-mono">Detected Medicine</span>
+                              <span className="font-bold text-[#0C2B4E]">
+                                {m.multimodal_result.detected_medicine || "Unknown"}
+                              </span>
+                            </div>
+                            <div>
+                              <span className="text-slate-500 block text-[10px] uppercase font-mono">NLEM 2022 Match</span>
+                              <span className={`font-bold ${m.multimodal_result.is_nlem_matched ? "text-emerald-700" : "text-amber-700"}`}>
+                                {m.multimodal_result.is_nlem_matched ? "VERIFIED ESSENTIAL" : "UNMATCHED SKU"}
+                              </span>
+                            </div>
+                            <div>
+                              <span className="text-slate-500 block text-[10px] uppercase font-mono">Quantity Extracted</span>
+                              <span className="font-bold text-emerald-700">
+                                {m.multimodal_result.detected_quantity ?? "—"} {m.multimodal_result.unit || "units"}
+                              </span>
+                            </div>
+                            <div>
+                              <span className="text-slate-500 block text-[10px] uppercase font-mono">Batch / Expiry</span>
+                              <span className="font-bold text-slate-700">
+                                {m.multimodal_result.batch_number || "—"} / {m.multimodal_result.expiry_date || "—"}
+                              </span>
+                            </div>
+                          </div>
+
+                          <div className="bg-amber-50/80 border border-amber-200 text-amber-900 rounded-lg p-2.5 text-[11px] flex items-start gap-1.5">
+                            <IconInfoCircle size={15} className="text-amber-700 shrink-0 mt-0.5" />
+                            <span>{m.multimodal_result.advisory_disclaimer}</span>
+                          </div>
+
+                          {m.multimodal_result.suggested_intake_prompt && (
+                            <div className="flex items-center justify-between gap-2 pt-1 border-t border-slate-100">
+                              <span className="text-[11px] text-slate-500 truncate">
+                                Suggested Intake: <strong className="text-slate-700">&quot;{m.multimodal_result.suggested_intake_prompt}&quot;</strong>
+                              </span>
+                              <button
+                                onClick={() => setInputMessage(m.multimodal_result!.suggested_intake_prompt!)}
+                                className="bg-[#1D546C] hover:bg-[#0C2B4E] text-white text-[11px] font-bold px-3 py-1 rounded-lg transition shrink-0 cursor-pointer"
+                              >
+                                Use In Chat
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
                     {/* Pending Update Confirmation Card */}
                     {m.sender === "advisor" && m.pending_update && (
                       <div className="mt-3 pt-3 border-t border-slate-200">
@@ -1148,6 +1413,7 @@ export default function AdvisorPage() {
                   </div>
                 </div>
               )}
+
 
               <div className="flex-1 flex flex-col gap-1">
                 <input

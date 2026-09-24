@@ -1,4 +1,5 @@
 import uuid
+import base64
 import hashlib
 import logging
 from datetime import datetime, timezone, date, timedelta
@@ -11,12 +12,16 @@ from app.models import User, UserRole, Facility, Inventory, Forecast, AuditEvent
 from app.schemas import (
     AdvisorChatRequest, AdvisorChatResponse,
     InventoryUpdateConfirmationRequest, InventoryUpdateConfirmationResponse,
-    ConversationCreate, ConversationSummary, ConversationDetail, MessageSchema
+    ConversationCreate, ConversationSummary, ConversationDetail, MessageSchema,
+    MultimodalImageAnalysisRequest, MultimodalAnalysisResponse
 )
 from app.security import (
     get_current_user, require_facility_officer, verify_facility_access
 )
-from app.advisor_service import run_grounded_ai_advisor, verify_update_token, generate_conversation_title
+from app.advisor_service import (
+    run_grounded_ai_advisor, verify_update_token, generate_conversation_title,
+    analyze_inventory_image
+)
 from app.algorithms import classify_risk_severity, run_forecast_and_alert_engine
 
 logger = logging.getLogger("healysis.advisor")
@@ -149,6 +154,10 @@ def post_conversation_message_endpoint(
     # Auto-generate title if currently default
     if convo.title == "New Chat":
         convo.title = generate_conversation_title(request.message)
+
+    if request.conversation_id is None:
+        request.conversation_id = convo.id
+    db.flush()
 
     # 2. Run grounded AI Advisor
     response = run_grounded_ai_advisor(request, current_user, db)
@@ -443,3 +452,66 @@ def confirm_inventory_update_endpoint(
         severity=severity_str,
         audit_event_id=event_id
     )
+
+
+@router.post("/analyze-image", response_model=MultimodalAnalysisResponse)
+def analyze_medicine_image_endpoint(
+    req: MultimodalImageAnalysisRequest,
+    current_user: User = Depends(require_facility_officer),
+    db: Session = Depends(get_db)
+):
+    """
+    Multimodal Vision Analysis endpoint powered by Gemini 2.5 Flash via Google GenAI SDK.
+    Extracts medicine name, packaging type, estimated quantity, and batch number from packaging or challan photos.
+    Always produces advisory output: requires human confirmation before physical inventory mutation.
+    """
+    if not req.image_base64 or not req.image_base64.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Missing base64 image data."
+        )
+
+    # Strip data URL prefix if present (e.g. data:image/jpeg;base64,...)
+    raw_b64 = req.image_base64
+    if "," in raw_b64:
+        raw_b64 = raw_b64.split(",", 1)[1]
+
+    try:
+        image_bytes = base64.b64decode(raw_b64)
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid base64 encoding for image data."
+        )
+
+    if len(image_bytes) > 5 * 1024 * 1024:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="File size exceeds the 5MB limit for multimodal inspection."
+        )
+
+    mime = req.mime_type or "image/jpeg"
+    if not mime.startswith("image/"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid MIME type: '{mime}'. Supported types: image/jpeg, image/png, image/webp."
+        )
+
+    try:
+        analysis = analyze_inventory_image(
+            image_bytes=image_bytes,
+            filename=req.filename or "upload.jpg",
+            mime_type=mime,
+            user_prompt=req.prompt,
+            current_user=current_user,
+            db=db
+        )
+        return analysis
+    except ValueError as val_err:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(val_err))
+    except Exception as exc:
+        logger.error(f"Multimodal vision analysis error: {exc}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Multimodal image analysis encountered an internal error. Please try again or enter stock manually."
+        )

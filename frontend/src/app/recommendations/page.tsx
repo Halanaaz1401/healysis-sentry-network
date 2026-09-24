@@ -4,6 +4,7 @@ import React, { useState, useEffect } from "react";
 import { AppShell } from "@/components/AppShell";
 import { useAuth } from "@/context/AuthContext";
 import { apiFetch } from "@/lib/apiClient";
+import { GoogleMapsRouteViewer } from "@/components/GoogleMapsRouteViewer";
 import { 
   IconRefresh, 
   IconShieldCheck, 
@@ -23,7 +24,8 @@ import {
   IconPlayerPlay,
   IconAlertTriangle,
   IconAlertCircle,
-  IconAdjustmentsHorizontal
+  IconAdjustmentsHorizontal,
+  IconRoute
 } from "@tabler/icons-react";
 
 export default function RecommendationsPage() {
@@ -36,6 +38,7 @@ export default function RecommendationsPage() {
   const [expandedRecs, setExpandedRecs] = useState<Record<number, boolean>>({});
   const [explanations, setExplanations] = useState<Record<number, any>>({});
   const [explLoading, setExplLoading] = useState<Record<number, boolean>>({});
+  const [showMap, setShowMap] = useState<Record<number, boolean>>({});
 
   // What-If Simulation State
   const [showSimulator, setShowSimulator] = useState(false);
@@ -1258,6 +1261,14 @@ export default function RecommendationsPage() {
                       <IconPlayerPlay size={13} className="text-indigo-600" />
                       <span>What-If Simulation</span>
                     </button>
+                    <button
+                      onClick={() => setShowMap(prev => ({ ...prev, [rec.id]: !prev[rec.id] }))}
+                      className="bg-emerald-50 hover:bg-emerald-100 text-emerald-900 border border-emerald-200 px-3 py-1.5 rounded-xl font-bold text-xs flex items-center gap-1.5 cursor-pointer transition"
+                      title="View Google Maps / GIS Route & Facility Telemetry"
+                    >
+                      <IconRoute size={13} className="text-emerald-700" />
+                      <span>{showMap[rec.id] ? "Hide Route Map" : "Geospatial Route"}</span>
+                    </button>
                     <span className="text-[11px] text-slate-400">
                       Urgency: <strong className="text-slate-700 uppercase">{rec.urgency_level}</strong>
                     </span>
@@ -1301,6 +1312,27 @@ export default function RecommendationsPage() {
                     )
                   )}
                 </div>
+
+                {/* GEOSPATIAL GOOGLE MAPS / GIS CORRIDOR VIEWER */}
+                {showMap[rec.id] && (
+                  <GoogleMapsRouteViewer
+                    donorFacility={donorName}
+                    recipientFacility={recipName}
+                    donorDistrict={donorLoc}
+                    recipientDistrict={recipLoc}
+                    donorCoords={{
+                      lat: rec.donor_latitude ?? 20.1800,
+                      lng: rec.donor_longitude ?? 85.7000
+                    }}
+                    recipientCoords={{
+                      lat: rec.recipient_latitude ?? 20.1200,
+                      lng: rec.recipient_longitude ?? 85.8300
+                    }}
+                    distanceKm={rec.haversine_distance_km || 15.0}
+                    medicineName={itemName}
+                    transferQuantity={rec.recommended_quantity}
+                  />
+                )}
 
                 {/* Expandable Evidence & Explainability Drawer */}
                 {expandedRecs[rec.id] && (

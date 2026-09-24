@@ -4,7 +4,10 @@ from typing import List, Union, Optional, Any
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from dotenv import load_dotenv
+
 BASE_DIR = Path(__file__).resolve().parent.parent
+load_dotenv(dotenv_path=BASE_DIR / ".env", override=False)
 
 class Settings(BaseSettings):
     PROJECT_NAME: str = "Healysis Core Telemetry Network"
@@ -35,7 +38,7 @@ class Settings(BaseSettings):
     
     # Security & Firebase Configuration
     SECRET_KEY: str = os.getenv("SECRET_KEY", "healysis-super-secret-key-2026-production-min-32-bytes")
-    GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
+    GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY") or ""
     GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
     
     FIREBASE_PROJECT_ID: str = os.getenv("FIREBASE_PROJECT_ID", "healysis-sentry-network")
