@@ -272,6 +272,32 @@ def get_user_authorized_district(user: Optional[User], db: Session) -> Optional[
             return dist
     return None
 
+
+def get_user_authorized_facilities(user: Optional[User], db: Session) -> List[Facility]:
+    """
+    Returns the strict list of authorized facilities that the authenticated user is allowed to access
+    according to Healysis RBAC:
+    - FACILITY_OFFICER: Strictly and exclusively their assigned facility (user.facility_id).
+    - CDMO: Authorized facilities within their district if district-bound (e.g. CDMO Khordha),
+      or all network facilities available to the CDMO if general/director.
+    - ADMIN: All facilities in the system.
+    """
+    if not user:
+        return []
+    if user.role == UserRole.FACILITY_OFFICER:
+        if user.facility_id:
+            fac = db.query(Facility).filter(Facility.id == user.facility_id).first()
+            return [fac] if fac else []
+        return []
+    elif user.role == UserRole.CDMO:
+        auth_district = get_user_authorized_district(user, db)
+        if auth_district:
+            return db.query(Facility).filter(Facility.district.ilike(auth_district.strip())).all()
+        return db.query(Facility).all()
+    elif user.role == UserRole.ADMIN:
+        return db.query(Facility).all()
+    return []
+
 # ==========================================
 # Query Understanding Pipeline & Taxonomy
 # ==========================================
@@ -304,6 +330,9 @@ class StructuredQuery:
         # Natural Language & Context parameters
         self.context_inherited_resource: bool = False
         self.target_lang: str = "en"
+        # Backend RBAC Enforcement parameters
+        self.is_unauthorized_scope: bool = False
+        self.unauthorized_reason: str = ""
 
 def _match_resources_in_text(text: str, text_lower: str) -> List[Dict[str, Any]]:
     """
@@ -549,27 +578,78 @@ def interpret_user_query(
             if not matches_db:
                 sq.unresolved_facilities.append(tok.capitalize())
 
-    # 4. Scope Population
+    # 4. Scope Population & Backend RBAC
+    user_auth_facs = get_user_authorized_facilities(current_user, db)
+
     if explicit_matched_facs:
-        sq.facility_scope = explicit_matched_facs
+        # Check authorization for explicitly requested facilities:
+        if current_user.role == UserRole.FACILITY_OFFICER:
+            user_fid = current_user.facility_id
+            if any(f.id != user_fid for f in explicit_matched_facs):
+                sq.is_unauthorized_scope = True
+                sq.unauthorized_reason = "Your access is limited to your assigned facility. As a Facility Officer, you are restricted to scenarios involving your assigned facility, and I can't show data from other facilities."
+                sq.facility_scope = user_auth_facs
+            else:
+                sq.facility_scope = [f for f in explicit_matched_facs if f.id == user_fid]
+        elif current_user.role == UserRole.CDMO and auth_district:
+            if any(f.district.lower() != auth_district.lower() for f in explicit_matched_facs):
+                sq.is_unauthorized_scope = True
+                sq.unauthorized_reason = f"Your administrative jurisdiction is limited to {auth_district} district. I can't show data from other districts."
+                sq.facility_scope = user_auth_facs
+            else:
+                sq.facility_scope = [f for f in explicit_matched_facs if f.district.lower() == auth_district.lower()]
+        else:
+            sq.facility_scope = explicit_matched_facs
     elif sq.district:
-        sq.facility_scope = [f for f in all_facs if f.district.lower() == sq.district.lower()]
+        if current_user.role == UserRole.FACILITY_OFFICER:
+            user_fac = user_auth_facs[0] if user_auth_facs else None
+            if not user_fac or user_fac.district.lower() != sq.district.lower():
+                sq.is_unauthorized_scope = True
+                sq.unauthorized_reason = "Your access is limited to your assigned facility. As a Facility Officer, you are restricted to scenarios involving your assigned facility, and I can't show data from other facilities."
+                sq.facility_scope = user_auth_facs
+            else:
+                sq.facility_scope = [user_fac]
+        elif current_user.role == UserRole.CDMO and auth_district:
+            if sq.district.lower() != auth_district.lower():
+                sq.is_unauthorized_scope = True
+                sq.unauthorized_reason = f"Your administrative jurisdiction is limited to {auth_district} district. I can't show data from other districts."
+                sq.facility_scope = user_auth_facs
+            else:
+                sq.facility_scope = [f for f in all_facs if f.district.lower() == auth_district.lower()]
+        else:
+            sq.facility_scope = [f for f in all_facs if f.district.lower() == sq.district.lower()]
     elif sq.state:
-        sq.facility_scope = [f for f in all_facs if f.state.upper() == sq.state.upper()]
+        if current_user.role == UserRole.FACILITY_OFFICER:
+            user_fac = user_auth_facs[0] if user_auth_facs else None
+            if not user_fac or user_fac.state.upper() != sq.state.upper():
+                sq.is_unauthorized_scope = True
+                sq.unauthorized_reason = "Your access is limited to your assigned facility. As a Facility Officer, you are restricted to scenarios involving your assigned facility, and I can't show data from other facilities."
+                sq.facility_scope = user_auth_facs
+            else:
+                sq.facility_scope = [user_fac]
+        elif current_user.role == UserRole.CDMO and auth_district:
+            dist_facs = [f for f in all_facs if f.district.lower() == auth_district.lower()]
+            if not dist_facs or dist_facs[0].state.upper() != sq.state.upper():
+                sq.is_unauthorized_scope = True
+                sq.unauthorized_reason = f"Your administrative jurisdiction is limited to {auth_district} district. I can't show data from other districts."
+                sq.facility_scope = user_auth_facs
+            else:
+                sq.facility_scope = dist_facs
+        else:
+            sq.facility_scope = [f for f in all_facs if f.state.upper() == sq.state.upper()]
     elif is_all_network or "across" in msg_lower or "network" in msg_lower:
-        if current_user.role == UserRole.CDMO and auth_district:
+        if current_user.role == UserRole.FACILITY_OFFICER:
+            sq.is_unauthorized_scope = True
+            sq.unauthorized_reason = "Your access is limited to your assigned facility. As a Facility Officer, you are restricted to scenarios involving your assigned facility, and I can't show data from other facilities."
+            sq.facility_scope = user_auth_facs
+        elif current_user.role == UserRole.CDMO and auth_district:
             sq.facility_scope = [f for f in all_facs if f.district.lower() == auth_district.lower()]
             sq.district = auth_district
         else:
-            sq.facility_scope = all_facs
-    elif current_user.role == UserRole.FACILITY_OFFICER and current_user.facility_id:
-        user_fac = db.query(Facility).filter(Facility.id == current_user.facility_id).first()
-        sq.facility_scope = [user_fac] if user_fac else all_facs
-    elif current_user.role == UserRole.CDMO and auth_district:
-        sq.facility_scope = [f for f in all_facs if f.district.lower() == auth_district.lower()]
-        sq.district = auth_district
+            sq.facility_scope = user_auth_facs
     else:
-        sq.facility_scope = all_facs
+        # Broad natural query with no explicit facility: Use the user's full authorized scope
+        sq.facility_scope = user_auth_facs
 
     # 4b. Unknown resource detection for query path
     if not sq.unresolved_resources and not sq.resource_scope:
@@ -588,9 +668,9 @@ def interpret_user_query(
             if unresolved_nouns:
                 sq.unresolved_resources.append(unresolved_nouns[0])
         elif has_stock_keyword or has_query_word:
-            m = re.search(r'\bstock\s+of\s+([a-zA-Z]+)\b', msg_lower)
+            m = re.search(r'\bstock\s+of\s+([a-zA-Z0-9\-]+)\b', msg_lower)
             if not m:
-                m = re.search(r'\b([a-zA-Z]+)\s+(?:ka\s+|ki\s+|ke\s+)?stock\b', msg_lower)
+                m = re.search(r'\b([a-zA-Z0-9\-]+)\s+(?:ka\s+|ki\s+|ke\s+)?(?:kitna\s+|kitne\s+)?stock\b', msg_lower)
             if m:
                 cand = m.group(1).strip()
                 stop_words = {
@@ -598,15 +678,17 @@ def interpret_user_query(
                     "jatni", "pipili", "behala", "diamond", "harbour", "kolkata", "khordha", "puri", "south24", "cuttack",
                     "mein", "me", "mai", "ka", "ki", "ke", "hai", "aaj", "kitna", "kitne", "kitni", "kya",
                     "show", "tell", "check", "give", "display", "hospital", "chc", "phc", "uphc",
-                    "urgent", "serious", "critical", "problem", "issue", "complete", "level", "kaunsi",
+                    "urgent", "serious", "critical", "problem", "issue", "complete", "level", "levels", "kaunsi",
                     "which", "any", "emergency", "jaldi", "stockout", "soon",
                     "network", "district", "districts", "facility", "facilities", "state", "region",
                     "ors", "stock", "risk", "alert", "alerts", "tension", "forecast", "chalega", "chalegi",
                     "bacha", "kam", "pehle", "khatam", "chahiye", "dhyan", "sirf", "baaki", "mat", "theek",
                     "safe", "kab", "konsa", "kaunsa", "situation", "din", "refill", "important", "simple",
                     "closest", "worry", "consumption", "pattern", "unchanged", "least", "coverage", "enough",
-                    "adequate", "shortage", "attention", "low", "center", "centers", "scene", "kaisa", "kaisi",
-                    "kaise", "dikkat", "status", "bhai", "batao", "bataiye"
+                    "adequate", "shortage", "attention", "low", "lowest", "fewest", "highest", "most", "maximum", "minimum",
+                    "center", "centers", "scene", "kaisa", "kaisi", "kaise", "dikkat", "status", "bhai", "batao", "bataiye",
+                    "have", "has", "do", "we", "resource", "resources", "supplies", "supply", "medicine", "medicines",
+                    "report", "overview", "what", "how", "much", "many", "good"
                 }
                 if cand not in stop_words and len(cand) >= 2:
                     sq.unresolved_resources.append(cand)
@@ -651,7 +733,6 @@ def interpret_user_query(
         "highest stockout risk facility",
         "which facility is most critical",
         "which facility is at critical risk",
-        "which facility has the lowest stock",
         "which facility is running out first",
         "highest risk facility",
         "most critical facility"
@@ -665,6 +746,25 @@ def interpret_user_query(
         sq.intent = "FACILITY_HIGHEST_RISK"
         sq.answer_style = "DIRECT"
         sq.requested_operation = "evaluate_highest_risk_facility"
+        return sq
+
+    # A0-1b. Low-Stock Facilities Query Detection
+    # Answers: "Which facility has low stock?", "Which facilities have low stock?", "Which facility has the lowest stock?"
+    low_stock_facility_phrases = [
+        "which facility has low stock", "which facilities have low stock",
+        "which facility has the lowest stock", "which facility has lowest stock",
+        "which facilities have the lowest stock", "facilities with low stock",
+        "facility has low stock", "facility with low stock", "facilities have low stock",
+        "centers with low stock", "which center has low stock", "which centers have low stock",
+        "who has low stock", "which hospital has low stock", "which hospitals have low stock",
+        "centers have low stock", "facility is running low", "facilities running low",
+        "centers running low", "low stock centers", "low stock facilities",
+        "facilities have lowest stock", "facility has lowest stock"
+    ]
+    if any(p in msg_lower for p in low_stock_facility_phrases):
+        sq.intent = "LOW_STOCK_FACILITIES"
+        sq.answer_style = "DIRECT"
+        sq.requested_operation = "evaluate_low_stock_facilities"
         return sq
 
     # A0-2. Network & District Intelligence Intent Detection (Explicit Reports Only)
@@ -867,6 +967,19 @@ def interpret_user_query(
         sq.answer_style = "DIRECT"
         return sq
 
+    # G0. Resource Highest Stock / Highest Quantity
+    highest_res_keywords = [
+        "which resource has the highest stock", "which medicine has the highest stock",
+        "which resource has highest stock", "which medicine has highest stock",
+        "highest stock resource", "highest stock item", "highest stock medicine",
+        "resource has the highest stock", "medicine has the highest stock",
+        "kaunsi medicine ka sabse zyada stock", "kaunsa resource highest stock"
+    ]
+    if any(k in msg_lower for k in highest_res_keywords):
+        sq.intent = "RESOURCE_HIGHEST_STOCK"
+        sq.answer_style = "DIRECT"
+        return sq
+
     # G1. Facility Stock Ranking (Lowest / Highest)
     if any(k in msg_lower for k in ["lowest", "least", "minimum", "sabse kam"]) and not is_fac_risk:
         if sq.resource_scope or any(k in msg_lower for k in ["stock", "sachet", "tablet", "vial", "quantity"]):
@@ -927,6 +1040,29 @@ def interpret_user_query(
     if any(k in msg_lower for k in ["audit", "recent transfers", "transaction log", "ledger", "recent changes", "operational events"]):
         sq.intent = "AUDIT_HISTORY"
         sq.answer_style = "DETAILED"
+        return sq
+
+    # L0. Broad Resource Overview / Report (when no specific resource SKU is queried)
+    broad_overview_phrases = [
+        "what resources are available", "what resources do we have", "what resources do i have",
+        "what stock is available", "show me available resources", "show available resources",
+        "give me the resource status", "give me the current resource status", "current resource status",
+        "give me a resource report", "give me resource report", "resource report",
+        "what do we currently have", "what do we have", "what supplies do we have",
+        "what supplies are available", "what medicines are available", "what medicines do we have",
+        "what inventory is available", "show available inventory", "available resources",
+        "resource status", "resource overview", "current resources", "resource summary",
+        "give me a resource summary",
+        "resources are available", "resources do we have", "what resources are",
+        "give me a report on resources", "give me resource overview", "report on resources"
+    ]
+    if len(sq.resource_scope) == 0 and (any(p in msg_lower for p in broad_overview_phrases) or clean_msg in [
+        "resources", "resources?", "available resources", "resource report", "resource status", "resource overview",
+        "what resources", "available stock", "stock status", "stock available"
+    ]):
+        sq.intent = "BROAD_RESOURCE_OVERVIEW"
+        sq.answer_style = "SUMMARY"
+        sq.requested_operation = "broad_resource_overview"
         return sq
 
     # L. Healthcare / Operational Summary
@@ -996,6 +1132,13 @@ def format_grounded_operational_answer(
     current_user: User,
     db: Session
 ) -> Tuple[str, str]:
+    # -1. Early Unauthorized Scope Check
+    if query.is_unauthorized_scope:
+        return (
+            query.unauthorized_reason or "Your access is limited to your assigned facility. As a Facility Officer, you are restricted to scenarios involving your assigned facility, and I can't show data from other facilities.",
+            "SAFE"
+        )
+
     # 0. Strict RBAC Facility Scoping for Facility Officers
     if current_user.role == UserRole.FACILITY_OFFICER and current_user.facility_id:
         user_fac = db.query(Facility).filter(Facility.id == current_user.facility_id).first()
@@ -1371,6 +1514,15 @@ def format_grounded_operational_answer(
                 "SAFE"
             )
         facs = [user_fac] if user_fac else []
+    elif current_user.role == UserRole.CDMO:
+        auth_district = get_user_authorized_district(current_user, db)
+        if auth_district:
+            if query.facility_scope and all(f.district.lower() == auth_district.lower() for f in query.facility_scope):
+                facs = query.facility_scope
+            else:
+                facs = db.query(Facility).filter(func.lower(Facility.district) == auth_district.lower()).all()
+        else:
+            facs = query.facility_scope if query.facility_scope else db.query(Facility).all()
     else:
         facs = query.facility_scope if query.facility_scope else db.query(Facility).all()
 
@@ -1571,6 +1723,108 @@ def format_grounded_operational_answer(
         else:
             ans = f"At {fname}, {med_name} has the lowest stock with {lowest.quantity} {lowest.unit} remaining ({doc:.0f} days of cover, safety threshold: {lowest.safety_stock} {lowest.unit})."
         return ans, sev
+
+    # ==========================================
+    # Handler: RESOURCE_HIGHEST_STOCK
+    # Answers: "Which resource has the highest stock?", "Which medicine has the highest stock?"
+    # ==========================================
+    if query.intent == "RESOURCE_HIGHEST_STOCK":
+        target = fac_telemetry[0] if fac_telemetry else None
+        if not target:
+            return "No facility operational telemetry available.", "SAFE"
+        fname = get_clean_facility_name(target["facility"])
+        invs = sorted(target["inventory"], key=lambda i: i.quantity, reverse=True)
+        highest = invs[0] if invs else None
+        if not highest:
+            return f"At {fname}, no inventory records were found.", "SAFE"
+        med_name = highest.item_name
+        for cat in RESOURCE_CATALOG:
+            if cat["code"] == highest.item_code:
+                med_name = cat["name"]
+                break
+        return f"At {fname}, {med_name} has the highest stock with {highest.quantity} {highest.unit}.", "SAFE"
+
+    # ==========================================
+    # Handler: LOW_STOCK_FACILITIES
+    # Answers: "Which facility has low stock?", "Which facility has the lowest stock?", "Which facilities have low stock?"
+    # ==========================================
+    if query.intent == "LOW_STOCK_FACILITIES":
+        # Strict RBAC: Facility Officer can only see their own facility
+        if current_user.role == UserRole.FACILITY_OFFICER:
+            target = fac_telemetry[0] if fac_telemetry else None
+            if not target:
+                return "No facility operational telemetry available.", "SAFE"
+            fn = get_clean_facility_name(target["facility"])
+            low_items = []
+            for inv in target["inventory"]:
+                fc = next((c for c in target["forecasts"] if c.item_code == inv.item_code), None)
+                doc = fc.days_of_cover if fc and fc.days_of_cover is not None else 99.0
+                if inv.quantity < inv.safety_stock or doc < 7.0:
+                    med_name = inv.item_name
+                    for cat in RESOURCE_CATALOG:
+                        if cat["code"] == inv.item_code:
+                            med_name = cat["name"]
+                            break
+                    doc_str = f"{int(doc) if doc.is_integer() else doc:.0f} day{'s' if doc > 1 else ''}"
+                    low_items.append(f"• {med_name}: {inv.quantity} {inv.unit} (about {doc_str} of cover remaining)")
+
+            if low_items:
+                ans = f"As a Facility Officer for {fn}, your operational access is restricted to your assigned facility.\n\nAt {fn}, the following resources are running low on stock:\n" + "\n".join(low_items)
+                return ans, "WARNING"
+            else:
+                ans = f"As a Facility Officer for {fn}, your operational access is restricted to your assigned facility.\n\nAll monitored resources at {fn} currently maintain adequate stock levels with safe coverage."
+                return ans, "SAFE"
+
+        # CDMO / Admin: Evaluate all authorized facilities
+        is_singular_lowest = any(w in query.original_msg.lower() for w in ["lowest", "sabse kam", "least"])
+        facility_low_reports = []
+        worst_facility = None
+        worst_doc = 999.0
+        worst_res = ""
+        worst_qty = 0
+        worst_unit = ""
+
+        for ft in fac_telemetry:
+            fn = get_clean_facility_name(ft["facility"])
+            dist = ft["facility"].district or ""
+            dist_str = f" ({dist})" if dist else ""
+            f_low = []
+            for inv in ft["inventory"]:
+                fc = next((c for c in ft["forecasts"] if c.item_code == inv.item_code), None)
+                doc = fc.days_of_cover if fc and fc.days_of_cover is not None else 99.0
+                if inv.quantity < inv.safety_stock or doc < 7.0:
+                    med_name = inv.item_name
+                    for cat in RESOURCE_CATALOG:
+                        if cat["code"] == inv.item_code:
+                            med_name = cat["name"]
+                            break
+                    doc_str = f"{int(doc) if doc.is_integer() else doc:.0f} day{'s' if doc > 1 else ''}"
+                    f_low.append(f"{med_name} ({inv.quantity} {inv.unit}, ~{doc_str} cover)")
+                if doc < worst_doc:
+                    worst_doc = doc
+                    worst_facility = f"{fn}{dist_str}"
+                    worst_res = inv.item_name
+                    for cat in RESOURCE_CATALOG:
+                        if cat["code"] == inv.item_code:
+                            worst_res = cat["name"]
+                            break
+                    worst_qty = inv.quantity
+                    worst_unit = inv.unit
+
+            if f_low:
+                facility_low_reports.append(f"• {fn}{dist_str}: {', '.join(f_low)}")
+
+        if is_singular_lowest and worst_facility and worst_doc < 7.0:
+            doc_str = f"{int(worst_doc) if worst_doc.is_integer() else worst_doc:.0f} day{'s' if worst_doc > 1 else ''}"
+            sev = "CRITICAL" if worst_doc < 3.0 else "WARNING"
+            ans = f"{worst_facility} has the lowest stock across your authorized facilities, with {worst_res} at {worst_qty} {worst_unit} (about {doc_str} of cover remaining)."
+            return ans, sev
+
+        if facility_low_reports:
+            ans = f"Facilities with low stock in your authorized scope:\n\n" + "\n".join(facility_low_reports) + f"\n\nOverall: {len(facility_low_reports)} facilities require stock replenishment or redistribution."
+            return ans, "WARNING"
+        else:
+            return "All facilities in your authorized scope currently maintain adequate stock levels with safe coverage.", "SAFE"
 
     # ==========================================
     # Handler: RESOURCE_FORECAST (Sections 5, 9, 18)
@@ -2138,22 +2392,25 @@ def format_grounded_operational_answer(
         res_name = res["name"]
         res_unit = res["unit"]
 
-        # If user explicitly asked for all facilities or across network, show clean list
-        is_multi_fac_requested = any(w in query.original_msg.lower() for w in ["across", "all facilities", "every facility", "network", "districts"])
-        if len(fac_telemetry) > 1 and is_multi_fac_requested:
+        # When multiple facilities are authorized (CDMO / Admin) and user didn't specify a single facility:
+        # Aggregate and show availability across authorized facilities
+        if len(fac_telemetry) > 1:
             lines = [f"{res_name} stock levels across authorized facilities:"]
             worst_sev = "SAFE"
+            total_qty = 0
             for ft in fac_telemetry:
                 fn = get_clean_facility_name(ft["facility"])
                 inv_item = next((i for i in ft["inventory"] if _matches_sku(i.item_code, target_sku)), None)
                 fc_item = next((c for c in ft["forecasts"] if _matches_sku(c.item_code, target_sku)), None)
                 item_qty = inv_item.quantity if inv_item else 0
+                total_qty += item_qty
                 item_doc = fc_item.days_of_cover if fc_item else 99.0
                 if item_doc < 3.0:
                     worst_sev = "CRITICAL"
                 elif item_doc < 7.0 and worst_sev != "CRITICAL":
                     worst_sev = "WARNING"
                 lines.append(f"• {fn}: {item_qty} {res_unit} ({item_doc:.1f} days of cover)")
+            lines.append(f"\nTotal available: {total_qty} {res_unit} across {len(fac_telemetry)} authorized facilities.")
             return "\n".join(lines), worst_sev
 
         target = fac_telemetry[0] if fac_telemetry else None
@@ -2185,6 +2442,96 @@ def format_grounded_operational_answer(
             else:
                 ans = f"{fname} has {qty} {res_name} {res_unit}, with about {doc_str} of cover."
         return ans, sev
+
+    # ==========================================
+    # Handler: BROAD_RESOURCE_OVERVIEW
+    # Answers: "What resources are available?", "Give me a resource report.", etc.
+    # Respects role-based scoping:
+    # - Facility Officer: only their assigned facility.
+    # - CDMO: aggregated overview across all authorized facilities.
+    # - Admin: aggregated overview across network.
+    # - Specific facility (e.g. "What resources are available at Jatni CHC?"): single facility.
+    # ==========================================
+    if query.intent == "BROAD_RESOURCE_OVERVIEW":
+        if not fac_telemetry:
+            return "No facility operational telemetry available.", "SAFE"
+
+        if len(fac_telemetry) > 1:
+            lines = ["Here is the current resource overview:\n"]
+            total_low_stock = 0
+            all_tracked_skus = set()
+
+            for ft in fac_telemetry:
+                fn = get_clean_facility_name(ft["facility"])
+                lines.append(f"{fn}")
+                invs = ft["inventory"]
+                fcs = ft["forecasts"]
+                for inv in invs:
+                    all_tracked_skus.add(inv.item_code)
+                    fc = next((c for c in fcs if c.item_code == inv.item_code), None)
+                    doc = fc.days_of_cover if fc and fc.days_of_cover is not None else 99.0
+                    is_low = inv.quantity < inv.safety_stock or doc < 7.0
+                    if is_low:
+                        total_low_stock += 1
+
+                    med_name = inv.item_name
+                    for cat in RESOURCE_CATALOG:
+                        if cat["code"] == inv.item_code:
+                            med_name = cat["name"]
+                            break
+                    lines.append(f"• {med_name}: {inv.quantity} {inv.unit}")
+                if not invs:
+                    lines.append("• No active inventory records reported.")
+                lines.append("")
+
+            lines.append("Overall:")
+            lines.append(f"• Facilities covered: {len(fac_telemetry)}")
+            lines.append(f"• Resources tracked: {len(all_tracked_skus)}")
+            lines.append(f"• Low-stock resources: {total_low_stock}")
+            lines.append("\nI can also give you a facility-wise or resource-wise breakdown.")
+            return "\n".join(lines).strip(), overall_severity
+        else:
+            # Single facility (Facility Officer or explicitly queried single facility)
+            target = fac_telemetry[0]
+            fn = get_clean_facility_name(target["facility"])
+            lines = [f"Here is the current resource overview for {fn}:\n"]
+            total_low_stock = 0
+            all_tracked_skus = set()
+            low_stock_names = []
+
+            if not target["inventory"]:
+                lines.append("• No active inventory records reported.")
+
+            for inv in target["inventory"]:
+                all_tracked_skus.add(inv.item_code)
+                fc = next((c for c in target["forecasts"] if c.item_code == inv.item_code), None)
+                doc = fc.days_of_cover if fc and fc.days_of_cover is not None else 99.0
+                is_low = inv.quantity < inv.safety_stock or doc < 7.0
+                
+                med_name = inv.item_name
+                for cat in RESOURCE_CATALOG:
+                    if cat["code"] == inv.item_code:
+                        med_name = cat["name"]
+                        break
+
+                risk_note = ""
+                if is_low:
+                    total_low_stock += 1
+                    low_stock_names.append(med_name)
+                    doc_str = f"{int(doc) if doc.is_integer() else doc:.0f} day{'s' if doc > 1 else ''}"
+                    risk_note = f" (Low stock - {doc_str} cover)"
+
+                lines.append(f"• {med_name}: {inv.quantity} {inv.unit}{risk_note}")
+
+            lines.append("\nOverall:")
+            lines.append(f"• Facilities covered: 1")
+            lines.append(f"• Resources tracked: {len(all_tracked_skus)}")
+            if low_stock_names:
+                lines.append(f"• Low-stock resources: {total_low_stock} ({', '.join(low_stock_names)})")
+            else:
+                lines.append(f"• Low-stock resources: 0")
+            lines.append("\nI can also give you demand forecasts or stock transfer recommendations.")
+            return "\n".join(lines).strip(), overall_severity
 
     # ==========================================
     # Handler: FACILITY_INVENTORY
@@ -3053,7 +3400,13 @@ def run_grounded_ai_advisor(
     target_lang_desc = "Hindi (Devanagari script)" if is_hindi_prompt else ("Hinglish (Hindi written phonetically in Roman script)" if is_hinglish_prompt else "English")
 
     genai_client = get_genai_client()
-    if genai_client and sq.intent not in ["WHY", "WHAT_IF_SIMULATION", "VERIFICATION", "FACILITY_HIGHEST_RISK", "SYSTEM_RECOMMENDATION", "REDISTRIBUTION"]:
+    skip_gemini = sq.intent in [
+        "WHY", "WHAT_IF_SIMULATION", "VERIFICATION", "FACILITY_HIGHEST_RISK",
+        "SYSTEM_RECOMMENDATION", "REDISTRIBUTION", "BROAD_RESOURCE_OVERVIEW",
+        "LOW_STOCK_FACILITIES", "RESOURCE_HIGHEST_STOCK"
+    ] or (sq.intent == "DIRECT_RESOURCE" and len(sq.facility_scope) > 1)
+
+    if genai_client and not skip_gemini:
         try:
             prompt = (
                 f"{SYSTEM_PROMPT}\n\n"
