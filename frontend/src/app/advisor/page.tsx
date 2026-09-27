@@ -246,6 +246,21 @@ export default function AdvisorPage() {
     };
   }, []);
 
+  // Clean raw Markdown syntax artifacts (Requirement 4) so UI never displays **, *, ###, ---
+  const cleanMarkdownText = (text: string): string => {
+    if (!text) return "";
+    return text
+      .replace(/^#{1,6}\s+/gm, "")
+      .replace(/\*\*(.*?)\*\*/g, "$1")
+      .replace(/(?<!\*)\*(?!\*)(.*?)(?<!\*)\*(?!\*)/g, "$1")
+      .replace(/_{1,2}(.*?)_{1,2}/g, "$1")
+      .replace(/^[-*_]{3,}\s*$/gm, "")
+      .replace(/^\s*[-*+]\s+/gm, "• ")
+      .replace(/`{1,3}(.*?)`{1,3}/g, "$1")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
+  };
+
   // Text Normalizer for Natural Clinical Speech (Requirement 5)
   const normalizeTextForSpeech = (rawText: string, lang: "en" | "hi" | "hinglish"): string => {
     let text = rawText;
@@ -1125,7 +1140,7 @@ export default function AdvisorPage() {
                       ? "bg-[#0C2B4E] text-white rounded-tr-none shadow-2xs" 
                       : "bg-slate-50 border border-slate-200 text-slate-800 rounded-tl-none"
                   }`}>
-                    <p className="leading-relaxed whitespace-pre-wrap">{m.text}</p>
+                    <p className="leading-relaxed whitespace-pre-wrap">{cleanMarkdownText(m.text)}</p>
 
                     {/* Gemini Multimodal Vision Analysis Card */}
                     {m.multimodal_result && (
