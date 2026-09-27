@@ -1321,16 +1321,17 @@ export default function RecommendationsPage() {
                     donorDistrict={donorLoc}
                     recipientDistrict={recipLoc}
                     donorCoords={{
-                      lat: rec.donor_latitude ?? 20.1800,
-                      lng: rec.donor_longitude ?? 85.7000
+                      lat: rec.donor_latitude ?? 20.1170,
+                      lng: rec.donor_longitude ?? 85.8330
                     }}
                     recipientCoords={{
-                      lat: rec.recipient_latitude ?? 20.1200,
-                      lng: rec.recipient_longitude ?? 85.8300
+                      lat: rec.recipient_latitude ?? 20.1650,
+                      lng: rec.recipient_longitude ?? 85.7050
                     }}
-                    distanceKm={rec.haversine_distance_km || 15.0}
+                    distanceKm={rec.haversine_distance_km || 14.4}
                     medicineName={itemName}
                     transferQuantity={rec.recommended_quantity}
+                    urgencyLevel={rec.urgency_level}
                   />
                 )}
 
