@@ -6,15 +6,13 @@ import {
   IconRoute, 
   IconBuildingHospital, 
   IconArrowRight, 
-  IconInfoCircle,
-  IconPlus,
-  IconMinus,
-  IconFocus2,
-  IconTruck,
-  IconPackage,
-  IconClock,
-  IconAlertTriangle,
-  IconCheck
+  IconPlus, 
+  IconMinus, 
+  IconFocus2, 
+  IconTruck, 
+  IconPackage, 
+  IconClock, 
+  IconAlertTriangle
 } from "@tabler/icons-react";
 
 interface GoogleMapsRouteViewerProps {
@@ -42,40 +40,63 @@ export const GoogleMapsRouteViewer: React.FC<GoogleMapsRouteViewerProps> = ({
   transferQuantity,
   urgencyLevel = "CRITICAL"
 }) => {
-  // Map viewport & interaction state
-  const [zoomLevel, setZoomLevel] = useState<number>(11);
+  const containerRef = useRef<HTMLDivElement>(null);
+  
+  // Dynamic container dimensions
+  const [dimensions, setDimensions] = useState<{ width: number; height: number }>({ 
+    width: 900, 
+    height: 390 
+  });
+
+  // Map viewport & pan/zoom state
+  const [zoomLevel, setZoomLevel] = useState<number>(11.5);
   const [panOffset, setPanOffset] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
   const [isDragging, setIsDragging] = useState<boolean>(false);
   const [dragStart, setDragStart] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
-  const [activeTooltip, setActiveTooltip] = useState<"donor" | "recipient" | null>(null);
-  const [tilesLoaded, setTilesLoaded] = useState<boolean>(true);
+  const [tilesFailed, setTilesFailed] = useState<boolean>(false);
   const [animProgress, setAnimProgress] = useState<number>(0);
 
-  const containerRef = useRef<HTMLDivElement>(null);
+  // Measure container dimensions dynamically
+  useEffect(() => {
+    if (!containerRef.current) return;
+    const updateSize = () => {
+      if (containerRef.current) {
+        const rect = containerRef.current.getBoundingClientRect();
+        if (rect.width > 0 && rect.height > 0) {
+          setDimensions({ width: Math.round(rect.width), height: Math.round(rect.height) });
+        }
+      }
+    };
+    updateSize();
+    const observer = new ResizeObserver(updateSize);
+    observer.observe(containerRef.current);
+    return () => observer.disconnect();
+  }, []);
 
-  // Fallback to real Odisha coordinates if defaults are somehow missing
+  // Verified coordinates for Pipili PHC and Jatni CHC
   const dLat = donorCoords?.lat || 20.1170;
   const dLng = donorCoords?.lng || 85.8330;
   const rLat = recipientCoords?.lat || 20.1650;
   const rLng = recipientCoords?.lng || 85.7050;
 
+  // Center coordinate of corridor
   const centerLat = (dLat + rLat) / 2;
   const centerLng = (dLng + rLng) / 2;
 
-  // Real highway corridor waypoints between Pipili and Jatni via State Highway 1 / Daya River corridor
+  // Real highway corridor waypoints connecting Pipili and Jatni via State Highway 1 / Daya River bridge
   const waypoints = useMemo(() => [
-    { lat: dLat, lng: dLng, label: "Pipili PHC Dispatch Gate" },
-    { lat: 20.1240, lng: 85.8180, label: "NH-316 / Pipili Bypass" },
-    { lat: 20.1380, lng: 85.7820, label: "Daya River Logistics Bridge" },
+    { lat: dLat, lng: dLng, label: "Pipili PHC Dispatch" },
+    { lat: 20.1240, lng: 85.8180, label: "Pipili Bypass / NH-316" },
+    { lat: 20.1380, lng: 85.7820, label: "Daya River Corridor" },
     { lat: 20.1510, lng: 85.7430, label: "Jatni-Pipili State Highway 1" },
-    { lat: rLat, lng: rLng, label: "Jatni CHC Receiving Bay" },
+    { lat: rLat, lng: rLng, label: "Jatni CHC Receiving" },
   ], [dLat, dLng, rLat, rLng]);
 
-  // Smooth transit animation loop for supplies (0 to 1 over 4 seconds)
+  // Smooth transit animation loop for supplies (0 to 1 over 4.5 seconds)
   useEffect(() => {
     let frameId: number;
     let startTime: number | null = null;
-    const duration = 4500; // 4.5 seconds per transfer cycle
+    const duration = 4500;
 
     const step = (timestamp: number) => {
       if (!startTime) startTime = timestamp;
@@ -89,34 +110,84 @@ export const GoogleMapsRouteViewer: React.FC<GoogleMapsRouteViewerProps> = ({
     return () => cancelAnimationFrame(frameId);
   }, []);
 
-  // Web Mercator / Equirectangular projection to convert (lat, lng) to canvas (x, y)
-  const project = useCallback((lat: number, lng: number, width: number, height: number) => {
-    // Zoom factor: at zoom 11, approx 5000px per degree of longitude in this viewport
-    const scale = 4200 * Math.pow(1.35, zoomLevel - 11);
-    const cosLat = Math.cos((centerLat * Math.PI) / 180);
+  // Web Mercator pixel projection: converts (lat, lng) to canvas (x, y) matching standard OSM tiles
+  const project = useCallback((lat: number, lng: number) => {
+    const z = zoomLevel;
+    const worldSize = 256 * Math.pow(2, z);
+    
+    // Pixel coordinate of target
+    const targetX = ((lng + 180) / 360) * worldSize;
+    const latRad = (lat * Math.PI) / 180;
+    const targetY = ((1 - Math.asinh(Math.tan(latRad)) / Math.PI) / 2) * worldSize;
 
-    const x = width / 2 + (lng - centerLng) * scale + panOffset.x;
-    const y = height / 2 - (lat - centerLat) * (scale * cosLat) + panOffset.y;
+    // Pixel coordinate of center
+    const centerWorldX = ((centerLng + 180) / 360) * worldSize;
+    const cLatRad = (centerLat * Math.PI) / 180;
+    const centerWorldY = ((1 - Math.asinh(Math.tan(cLatRad)) / Math.PI) / 2) * worldSize;
+
+    // Viewport relative coordinate with pan offset
+    const x = dimensions.width / 2 + (targetX - centerWorldX) + panOffset.x;
+    const y = dimensions.height / 2 + (targetY - centerWorldY) + panOffset.y;
 
     return { x, y };
-  }, [centerLat, centerLng, zoomLevel, panOffset]);
+  }, [centerLat, centerLng, zoomLevel, dimensions, panOffset]);
 
-  // Interpolate vehicle position along the route line
-  const vehiclePos = useMemo(() => {
-    if (waypoints.length < 2) return { lat: dLat, lng: dLng };
-    const numSegments = waypoints.length - 1;
+  // Projected positions of Donor & Recipient
+  const donorPt = useMemo(() => project(dLat, dLng), [project, dLat, dLng]);
+  const recipPt = useMemo(() => project(rLat, rLng), [project, rLat, rLng]);
+
+  // Waypoints projection & SVG path definition
+  const projectedWaypoints = useMemo(() => waypoints.map(w => project(w.lat, w.lng)), [waypoints, project]);
+  const routePathD = useMemo(() => {
+    return projectedWaypoints.reduce((acc, p, i) => `${acc} ${i === 0 ? "M" : "L"} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`, "");
+  }, [projectedWaypoints]);
+
+  // Interpolate vehicle position along route waypoints
+  const vehiclePt = useMemo(() => {
+    if (projectedWaypoints.length < 2) return donorPt;
+    const numSegments = projectedWaypoints.length - 1;
     const scaledP = animProgress * numSegments;
     const segIndex = Math.min(Math.floor(scaledP), numSegments - 1);
     const segT = scaledP - segIndex;
 
-    const p0 = waypoints[segIndex];
-    const p1 = waypoints[segIndex + 1];
+    const p0 = projectedWaypoints[segIndex];
+    const p1 = projectedWaypoints[segIndex + 1];
 
-    const curLat = p0.lat + (p1.lat - p0.lat) * segT;
-    const curLng = p0.lng + (p1.lng - p0.lng) * segT;
+    const curX = p0.x + (p1.x - p0.x) * segT;
+    const curY = p0.y + (p1.y - p0.y) * segT;
 
-    return { lat: curLat, lng: curLng };
-  }, [waypoints, animProgress]);
+    return { x: curX, y: curY };
+  }, [projectedWaypoints, animProgress, donorPt]);
+
+  // Dynamic OpenStreetMap tile calculation to fill 100% of current dimensions
+  const osmTiles = useMemo(() => {
+    const z = Math.min(Math.max(Math.floor(zoomLevel), 10), 13);
+    const n = Math.pow(2, z);
+    const latRad = (centerLat * Math.PI) / 180;
+    const centerTileX = ((centerLng + 180) / 360) * n;
+    const centerTileY = ((1 - Math.asinh(Math.tan(latRad)) / Math.PI) / 2) * n;
+
+    const baseTileX = Math.floor(centerTileX);
+    const baseTileY = Math.floor(centerTileY);
+
+    const radiusX = Math.ceil(dimensions.width / 512) + 1;
+    const radiusY = Math.ceil(dimensions.height / 512) + 1;
+
+    const tiles = [];
+    for (let dx = -radiusX; dx <= radiusX; dx++) {
+      for (let dy = -radiusY; dy <= radiusY; dy++) {
+        const tx = baseTileX + dx;
+        const ty = baseTileY + dy;
+        tiles.push({
+          key: `${z}-${tx}-${ty}`,
+          url: `https://tile.openstreetmap.org/${z}/${tx}/${ty}.png`,
+          offsetX: (dx - (centerTileX - baseTileX)) * 256,
+          offsetY: (dy - (centerTileY - baseTileY)) * 256,
+        });
+      }
+    }
+    return tiles;
+  }, [centerLat, centerLng, zoomLevel, dimensions]);
 
   // Mouse pan handlers
   const handleMouseDown = (e: React.MouseEvent) => {
@@ -137,56 +208,23 @@ export const GoogleMapsRouteViewer: React.FC<GoogleMapsRouteViewerProps> = ({
   };
 
   const handleResetView = () => {
-    setZoomLevel(11);
+    setZoomLevel(dimensions.width < 768 ? 11 : 11.5);
     setPanOffset({ x: 0, y: 0 });
   };
 
-  // Compute OpenStreetMap tile grid around center (lat ~20.141, lng ~85.769)
-  const osmTiles = useMemo(() => {
-    const z = Math.min(Math.max(zoomLevel, 10), 12);
-    const n = Math.pow(2, z);
-    const latRad = (centerLat * Math.PI) / 180;
-    const centerTileX = ((centerLng + 180) / 360) * n;
-    const centerTileY = ((1 - Math.asinh(Math.tan(latRad)) / Math.PI) / 2) * n;
-
-    const baseTileX = Math.floor(centerTileX);
-    const baseTileY = Math.floor(centerTileY);
-
-    const tiles = [];
-    // Render 3x3 grid around center tile
-    for (let dx = -1; dx <= 1; dx++) {
-      for (let dy = -1; dy <= 1; dy++) {
-        const tx = baseTileX + dx;
-        const ty = baseTileY + dy;
-        tiles.push({
-          key: `${z}-${tx}-${ty}`,
-          url: `https://tile.openstreetmap.org/${z}/${tx}/${ty}.png`,
-          dx,
-          dy,
-          z,
-          tx,
-          ty,
-          offsetX: (dx - (centerTileX - baseTileX)) * 256,
-          offsetY: (dy - (centerTileY - baseTileY)) * 256,
-        });
-      }
-    }
-    return tiles;
-  }, [centerLat, centerLng, zoomLevel]);
-
-  // Estimated driving transit time based on rural highway corridor
+  // Estimated driving transit time in minutes (~32 km/h on rural highway)
   const estimatedTransitMins = Math.max(18, Math.round((distanceKm / 32) * 60));
 
   return (
-    <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-xs my-4 select-none">
-      {/* Top Header Bar */}
-      <div className="bg-slate-900 text-white px-4 py-3 flex flex-wrap items-center justify-between gap-3 border-b border-slate-800">
-        <div className="flex items-center gap-2.5">
-          <div className="h-8 w-8 rounded-lg bg-emerald-700/80 border border-emerald-500/30 flex items-center justify-center text-white shrink-0">
-            <IconTruck size={18} />
+    <div className="w-full bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-xs my-4 select-none">
+      {/* SECTION B: COMPACT MAP HEADER */}
+      <div className="bg-slate-900 text-white px-4 py-2.5 flex flex-wrap items-center justify-between gap-2.5 border-b border-slate-800">
+        <div className="flex items-center gap-2.5 min-w-0">
+          <div className="h-7 w-7 rounded-lg bg-emerald-600/90 flex items-center justify-center text-white shrink-0 shadow-xs">
+            <IconRoute size={16} />
           </div>
-          <div>
-            <div className="flex items-center gap-2">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
               <h4 className="text-xs font-bold uppercase tracking-wider text-slate-100">
                 Inter-Facility Transfer Logistics Map
               </h4>
@@ -194,25 +232,25 @@ export const GoogleMapsRouteViewer: React.FC<GoogleMapsRouteViewerProps> = ({
                 {distanceKm.toFixed(1)} km
               </span>
             </div>
-            <p className="text-[11px] text-slate-400 mt-0.5">
+            <p className="text-[11px] text-slate-400 truncate">
               Corridor: <span className="text-emerald-300 font-semibold">{donorFacility}</span> ({donorDistrict}) &rarr; <span className="text-sky-300 font-semibold">{recipientFacility}</span> ({recipientDistrict})
             </p>
           </div>
         </div>
 
-        {/* Map Control Toolbar */}
-        <div className="flex items-center gap-1.5 text-xs">
+        {/* Zoom & Center Controls */}
+        <div className="flex items-center gap-1.5 text-xs shrink-0">
           <button
-            onClick={() => setZoomLevel(prev => Math.min(prev + 1, 13))}
-            className="h-7 w-7 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg flex items-center justify-center transition border border-slate-700"
+            onClick={() => setZoomLevel(prev => Math.min(prev + 0.5, 13.5))}
+            className="h-7 w-7 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg flex items-center justify-center transition border border-slate-700 cursor-pointer"
             title="Zoom In"
             type="button"
           >
             <IconPlus size={14} />
           </button>
           <button
-            onClick={() => setZoomLevel(prev => Math.max(prev - 1, 10))}
-            className="h-7 w-7 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg flex items-center justify-center transition border border-slate-700"
+            onClick={() => setZoomLevel(prev => Math.max(prev - 0.5, 10))}
+            className="h-7 w-7 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg flex items-center justify-center transition border border-slate-700 cursor-pointer"
             title="Zoom Out"
             type="button"
           >
@@ -220,33 +258,33 @@ export const GoogleMapsRouteViewer: React.FC<GoogleMapsRouteViewerProps> = ({
           </button>
           <button
             onClick={handleResetView}
-            className="px-2.5 h-7 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg flex items-center gap-1 text-[11px] font-medium transition border border-slate-700"
+            className="px-2.5 h-7 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg flex items-center gap-1 text-[11px] font-medium transition border border-slate-700 cursor-pointer"
             title="Reset and Center Route"
             type="button"
           >
             <IconFocus2 size={13} />
-            <span>Center Route</span>
+            <span className="hidden sm:inline">Center Route</span>
           </button>
         </div>
       </div>
 
-      {/* Interactive Map Canvas Container */}
+      {/* SECTION A: MAP VIEWPORT CONTAINER (Full width, controlled height: 380-420px) */}
       <div 
         ref={containerRef}
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
         onMouseLeave={handleMouseUp}
-        className={`relative w-full h-[320px] overflow-hidden bg-slate-100 ${isDragging ? "cursor-grabbing" : "cursor-grab"}`}
+        className={`relative w-full h-[380px] sm:h-[400px] md:h-[420px] overflow-hidden bg-slate-100 ${isDragging ? "cursor-grabbing" : "cursor-grab"}`}
         style={{ touchAction: "none" }}
       >
-        {/* Layer 1: OpenStreetMap Raster Tiles Background */}
+        {/* Layer 1: OpenStreetMap Raster Tiles (fills full width and height) */}
         <div className="absolute inset-0 pointer-events-none overflow-hidden">
           <div 
             className="absolute top-1/2 left-1/2"
             style={{ 
               transform: `translate(${panOffset.x}px, ${panOffset.y}px)`,
-              transition: isDragging ? "none" : "transform 0.15s ease-out"
+              transition: isDragging ? "none" : "transform 0.1s ease-out"
             }}
           >
             {osmTiles.map(tile => (
@@ -254,12 +292,12 @@ export const GoogleMapsRouteViewer: React.FC<GoogleMapsRouteViewerProps> = ({
                 key={tile.key}
                 src={tile.url}
                 alt=""
-                onError={() => setTilesLoaded(false)}
-                className="absolute w-[256px] h-[256px] max-w-none opacity-90 transition-opacity"
+                onError={() => setTilesFailed(true)}
+                className="absolute w-[256px] h-[256px] max-w-none opacity-95"
                 style={{
                   left: `${tile.offsetX}px`,
                   top: `${tile.offsetY}px`,
-                  filter: "contrast(1.02) saturate(0.95)"
+                  filter: "contrast(1.03) saturate(0.92)"
                 }}
                 draggable={false}
               />
@@ -267,294 +305,315 @@ export const GoogleMapsRouteViewer: React.FC<GoogleMapsRouteViewerProps> = ({
           </div>
         </div>
 
-        {/* Layer 2: Clean Odisha Cartographic Vector Layer (fallback & high-contrast geographic guides) */}
+        {/* Layer 2: Clean High-Contrast Regional Topography Fallback (if tiles offline) */}
+        {tilesFailed && (
+          <div className="absolute inset-0 bg-[#f1f5f9] pointer-events-none">
+            <svg className="w-full h-full">
+              {/* Subtle grid */}
+              <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+                <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#e2e8f0" strokeWidth="1"/>
+              </pattern>
+              <rect width="100%" height="100%" fill="url(#grid)" />
+              {/* Daya River Path */}
+              <path
+                d={`M ${dimensions.width * 0.45} 0 Q ${dimensions.width * 0.52} ${dimensions.height * 0.5} ${dimensions.width * 0.7} ${dimensions.height}`}
+                fill="none"
+                stroke="#bfdbfe"
+                strokeWidth="16"
+                strokeLinecap="round"
+              />
+              <text x={dimensions.width * 0.56} y={dimensions.height * 0.48} fill="#3b82f6" fontSize="11" fontWeight="bold" fontStyle="italic">
+                Daya River Basin
+              </text>
+            </svg>
+          </div>
+        )}
+
+        {/* Layer 3: SVG Route Line, Directional Arrows & Animated In-Transit Transport */}
         <svg 
           className="absolute inset-0 w-full h-full pointer-events-none"
           style={{ overflow: "visible" }}
         >
-          {(() => {
-            const width = 800;
-            const height = 320;
+          <g>
+            {/* Highway Route Outer Casing for maximum contrast */}
+            <path
+              d={routePathD}
+              fill="none"
+              stroke="#ffffff"
+              strokeWidth="9"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              opacity="0.95"
+            />
 
-            const donorPt = project(dLat, dLng, width, height);
-            const recipPt = project(rLat, rLng, width, height);
+            {/* Primary Highway Route Line (Solid crisp royal blue) */}
+            <path
+              d={routePathD}
+              fill="none"
+              stroke="#0284c7"
+              strokeWidth="5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
 
-            // Waypoint projection for road route
-            const pts = waypoints.map(w => project(w.lat, w.lng, width, height));
-            const pathD = pts.reduce((acc, p, i) => `${acc} ${i === 0 ? "M" : "L"} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`, "");
+            {/* Directional Flow Dashes along route */}
+            <path
+              d={routePathD}
+              fill="none"
+              stroke="#ffffff"
+              strokeWidth="1.5"
+              strokeDasharray="8 10"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              opacity="0.9"
+            />
 
-            // Vehicle projected position
-            const vehPt = project(vehiclePos.lat, vehiclePos.lng, width, height);
+            {/* SECTION E: SUBTLE ANIMATED IN-TRANSIT VEHICLE */}
+            <g transform={`translate(${vehiclePt.x}, ${vehiclePt.y})`}>
+              {/* Subtle soft pulse */}
+              <circle r="14" fill="#0284c7" fillOpacity="0.25" />
+              
+              {/* Vehicle Pill */}
+              <rect 
+                x="-14" 
+                y="-11" 
+                width="28" 
+                height="22" 
+                rx="6" 
+                fill="#0C2B4E" 
+                stroke="#ffffff" 
+                strokeWidth="2"
+                className="filter drop-shadow-sm"
+              />
+              {/* Clean delivery icon */}
+              <path 
+                d="M -7 -2 L -3 -2 L 1 2 L 6 2 M -7 2 L 6 2 M -4 6 A 2 2 0 1 0 0 6 M 3 6 A 2 2 0 1 0 7 6" 
+                stroke="#ffffff" 
+                strokeWidth="1.4" 
+                fill="none" 
+                strokeLinecap="round" 
+              />
+              {/* Small in-transit tag */}
+              <rect x="-24" y="-23" width="48" height="11" rx="3" fill="#0284c7" />
+              <text x="0" y="-15" fill="#ffffff" fontSize="7.5" fontWeight="bold" textAnchor="middle">
+                IN TRANSIT
+              </text>
+            </g>
 
-            // Geographic reference points in Odisha
-            const bhubaneswarPt = project(20.2961, 85.8245, width, height);
-            const khordhaTownPt = project(20.1810, 85.6200, width, height);
-            const puriPt = project(19.8135, 85.8312, width, height);
+            {/* DONOR PIN (Pipili PHC - Green Health Pin) */}
+            <g transform={`translate(${donorPt.x}, ${donorPt.y})`}>
+              <ellipse cx="0" cy="3" rx="7" ry="3.5" fill="#000000" fillOpacity="0.25" />
+              <path
+                d="M 0 0 C -10 -10 -10 -24 0 -30 C 10 -24 10 -10 0 0 Z"
+                fill="#059669"
+                stroke="#ffffff"
+                strokeWidth="2"
+                className="filter drop-shadow-sm"
+              />
+              <rect x="-1.5" y="-22" width="3" height="10" rx="0.5" fill="#ffffff" />
+              <rect x="-5" y="-18.5" width="10" height="3" rx="0.5" fill="#ffffff" />
+            </g>
 
-            return (
-              <g>
-                {/* Fallback geography background if OSM tiles are blocked or loading */}
-                {!tilesLoaded && (
-                  <g opacity="0.8">
-                    {/* Cartographic Landmass fill */}
-                    <rect width="100%" height="100%" fill="#f1f5f9" />
-                    
-                    {/* Real Daya River corridor */}
-                    <path
-                      d={`M ${bhubaneswarPt.x - 40} ${bhubaneswarPt.y + 20} Q ${(donorPt.x + recipPt.x)/2 + 20} ${(donorPt.y + recipPt.y)/2} ${donorPt.x + 60} ${donorPt.y + 120}`}
-                      fill="none"
-                      stroke="#93c5fd"
-                      strokeWidth="8"
-                      strokeLinecap="round"
-                    />
-                    <text x={((donorPt.x + recipPt.x)/2 + 35)} y={((donorPt.y + recipPt.y)/2) - 10} fill="#3b82f6" fontSize="10" fontWeight="600" fontStyle="italic">
-                      Daya River
-                    </text>
-
-                    {/* Regional National Highway 316 Corridor */}
-                    <line
-                      x1={bhubaneswarPt.x}
-                      y1={bhubaneswarPt.y}
-                      x2={donorPt.x + 20}
-                      y2={donorPt.y + 100}
-                      stroke="#cbd5e1"
-                      strokeWidth="4"
-                      strokeDasharray="4 4"
-                    />
-                    <text x={bhubaneswarPt.x + 10} y={bhubaneswarPt.y - 10} fill="#64748b" fontSize="10" fontWeight="700">
-                      Bhubaneswar (Dist. HQ)
-                    </text>
-                  </g>
-                )}
-
-                {/* Route Casing (White outer shadow for maximum contrast) */}
-                <path
-                  d={pathD}
-                  fill="none"
-                  stroke="#ffffff"
-                  strokeWidth="8"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  opacity="0.95"
-                />
-
-                {/* Primary Route Corridor (Solid clean blue road line) */}
-                <path
-                  d={pathD}
-                  fill="none"
-                  stroke="#0284c7"
-                  strokeWidth="4"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-
-                {/* Subtle Directional Road Dashes */}
-                <path
-                  d={pathD}
-                  fill="none"
-                  stroke="#e0f2fe"
-                  strokeWidth="1.5"
-                  strokeDasharray="6 8"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-
-                {/* Moving Supply Transport Marker (Pipili -> Jatni) */}
-                <g transform={`translate(${vehPt.x}, ${vehPt.y})`}>
-                  {/* Subtle pulsing transport halo */}
-                  <circle r="12" fill="#0284c7" fillOpacity="0.2" className="animate-ping" />
-                  
-                  {/* Vehicle base pill */}
-                  <rect 
-                    x="-14" 
-                    y="-11" 
-                    width="28" 
-                    height="22" 
-                    rx="6" 
-                    fill="#0C2B4E" 
-                    stroke="#ffffff" 
-                    strokeWidth="1.5"
-                    className="shadow-md"
-                  />
-                  {/* White transport vehicle icon */}
-                  <path 
-                    d="M -7 -2 L -3 -2 L 1 2 L 6 2 M -7 2 L 6 2 M -4 6 A 2 2 0 1 0 0 6 M 3 6 A 2 2 0 1 0 7 6" 
-                    stroke="#ffffff" 
-                    strokeWidth="1.2" 
-                    fill="none" 
-                    strokeLinecap="round" 
-                  />
-                  {/* Small In-Transit tooltip tag */}
-                  <rect x="-24" y="-24" width="48" height="12" rx="3" fill="#0284c7" />
-                  <text x="0" y="-15" fill="#ffffff" fontSize="8" fontWeight="bold" textAnchor="middle">
-                    IN TRANSIT
-                  </text>
-                </g>
-
-                {/* DONOR NODE: Pipili PHC (Green Healthcare Pin) */}
-                <g 
-                  transform={`translate(${donorPt.x}, ${donorPt.y})`}
-                  className="cursor-pointer"
-                  onClick={() => setActiveTooltip(activeTooltip === "donor" ? null : "donor")}
-                >
-                  {/* Base pin shadow */}
-                  <ellipse cx="0" cy="4" rx="8" ry="4" fill="#000000" fillOpacity="0.25" />
-                  
-                  {/* Marker Pin */}
-                  <path
-                    d="M 0 0 C -12 -12 -12 -28 0 -36 C 12 -28 12 -12 0 0 Z"
-                    fill="#059669"
-                    stroke="#ffffff"
-                    strokeWidth="2"
-                    className="filter drop-shadow-sm"
-                  />
-                  {/* Healthcare Cross inside Donor pin */}
-                  <rect x="-2" y="-26" width="4" height="12" rx="1" fill="#ffffff" />
-                  <rect x="-6" y="-22" width="12" height="4" rx="1" fill="#ffffff" />
-
-                  {/* Donor Badge Pill */}
-                  <rect x="-56" y="8" width="112" height="24" rx="6" fill="#ffffff" stroke="#059669" strokeWidth="1.5" className="shadow-xs" />
-                  <text x="0" y="19" fill="#065f46" fontSize="9" fontWeight="800" textAnchor="middle">
-                    DONOR: Pipili PHC
-                  </text>
-                  <text x="0" y="28" fill="#047857" fontSize="8" fontWeight="600" textAnchor="middle">
-                    Puri • Surplus Dispatch
-                  </text>
-                </g>
-
-                {/* RECIPIENT NODE: Jatni CHC (Blue/Navy Hospital Pin) */}
-                <g 
-                  transform={`translate(${recipPt.x}, ${recipPt.y})`}
-                  className="cursor-pointer"
-                  onClick={() => setActiveTooltip(activeTooltip === "recipient" ? null : "recipient")}
-                >
-                  {/* Base pin shadow */}
-                  <ellipse cx="0" cy="4" rx="8" ry="4" fill="#000000" fillOpacity="0.25" />
-                  
-                  {/* Marker Pin */}
-                  <path
-                    d="M 0 0 C -12 -12 -12 -28 0 -36 C 12 -28 12 -12 0 0 Z"
-                    fill="#0C2B4E"
-                    stroke="#ffffff"
-                    strokeWidth="2"
-                    className="filter drop-shadow-sm"
-                  />
-                  {/* Hospital 'H' inside Recipient pin */}
-                  <text x="0" y="-18" fill="#ffffff" fontSize="12" fontWeight="900" textAnchor="middle">
-                    H
-                  </text>
-
-                  {/* Recipient Badge Pill */}
-                  <rect x="-60" y="8" width="120" height="24" rx="6" fill="#ffffff" stroke="#0C2B4E" strokeWidth="1.5" className="shadow-xs" />
-                  <text x="0" y="19" fill="#0C2B4E" fontSize="9" fontWeight="800" textAnchor="middle">
-                    RECIPIENT: Jatni CHC
-                  </text>
-                  <text x="0" y="28" fill="#e11d48" fontSize="8" fontWeight="700" textAnchor="middle">
-                    Khordha • Deficit Relief
-                  </text>
-                </g>
-              </g>
-            );
-          })()}
+            {/* RECIPIENT PIN (Jatni CHC - Navy Hospital Pin) */}
+            <g transform={`translate(${recipPt.x}, ${recipPt.y})`}>
+              <ellipse cx="0" cy="3" rx="7" ry="3.5" fill="#000000" fillOpacity="0.25" />
+              <path
+                d="M 0 0 C -10 -10 -10 -24 0 -30 C 10 -24 10 -10 0 0 Z"
+                fill="#0C2B4E"
+                stroke="#ffffff"
+                strokeWidth="2"
+                className="filter drop-shadow-sm"
+              />
+              <text x="0" y="-15" fill="#ffffff" fontSize="10" fontWeight="900" textAnchor="middle">
+                H
+              </text>
+            </g>
+          </g>
         </svg>
 
-        {/* Map Legend Overlay (Top Left) */}
-        <div className="absolute top-3 left-3 bg-white/95 backdrop-blur-xs border border-slate-200 rounded-xl px-3 py-2 shadow-xs text-[11px] space-y-1 z-10 pointer-events-none">
-          <div className="flex items-center gap-2">
-            <span className="h-2.5 w-2.5 rounded-full bg-emerald-600 border border-white" />
-            <span className="text-slate-700 font-semibold">Donor Facility: <span className="text-slate-900">{donorFacility}</span></span>
+        {/* SECTION D: DEDICATED MARKER CALLOUT CARDS WITH POINTERS */}
+        {/* Donor Callout (Pipili PHC): Positioned south-east of pin, never collides with route exiting north-west */}
+        <div 
+          className="absolute pointer-events-none transition-transform z-10"
+          style={{
+            left: `${donorPt.x + 12}px`,
+            top: `${donorPt.y - 15}px`,
+          }}
+        >
+          <div className="relative bg-white/95 backdrop-blur-xs border-2 border-emerald-600 rounded-xl p-2.5 shadow-md max-w-[190px]">
+            {/* Left anchor pointer notch */}
+            <div className="absolute -left-2 top-3 w-0 h-0 border-y-4 border-y-transparent border-r-8 border-r-emerald-600" />
+            <div className="flex items-center gap-1.5 mb-0.5">
+              <span className="bg-emerald-600 text-white text-[9px] font-black uppercase px-1.5 py-0.5 rounded tracking-wider">
+                DONOR
+              </span>
+              <span className="text-[10px] font-bold text-emerald-800 truncate">
+                Surplus Dispatch
+              </span>
+            </div>
+            <div className="text-xs font-extrabold text-slate-900 leading-tight">
+              {donorFacility}
+            </div>
+            <div className="text-[10px] text-slate-500 font-medium">
+              District: {donorDistrict}
+            </div>
+          </div>
+        </div>
+
+        {/* Recipient Callout (Jatni CHC): Positioned north-east of pin, never collides with route exiting south-east */}
+        <div 
+          className="absolute pointer-events-none transition-transform z-10"
+          style={{
+            left: `${recipPt.x + 14}px`,
+            top: `${recipPt.y - 42}px`,
+          }}
+        >
+          <div className="relative bg-white/95 backdrop-blur-xs border-2 border-[#0C2B4E] rounded-xl p-2.5 shadow-md max-w-[190px]">
+            {/* Left anchor pointer notch */}
+            <div className="absolute -left-2 top-8 w-0 h-0 border-y-4 border-y-transparent border-r-8 border-r-[#0C2B4E]" />
+            <div className="flex items-center gap-1.5 mb-0.5">
+              <span className="bg-[#0C2B4E] text-white text-[9px] font-black uppercase px-1.5 py-0.5 rounded tracking-wider">
+                RECIPIENT
+              </span>
+              <span className="text-[10px] font-bold text-rose-700 truncate">
+                Deficit Relief
+              </span>
+            </div>
+            <div className="text-xs font-extrabold text-slate-900 leading-tight">
+              {recipientFacility}
+            </div>
+            <div className="text-[10px] text-slate-500 font-medium">
+              District: {recipientDistrict}
+            </div>
+          </div>
+        </div>
+
+        {/* SECTION C: DEDICATED COMPACT FLOATING LEGEND (Top Left, no overlap) */}
+        <div className="absolute top-3 left-3 bg-white/95 backdrop-blur-xs border border-slate-200/90 rounded-xl p-3 shadow-md max-w-[260px] text-[11px] space-y-1.5 z-20 pointer-events-none">
+          <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">
+            Logistics Corridor Legend
           </div>
           <div className="flex items-center gap-2">
-            <span className="h-2.5 w-2.5 rounded-full bg-[#0C2B4E] border border-white" />
-            <span className="text-slate-700 font-semibold">Recipient Facility: <span className="text-slate-900">{recipientFacility}</span></span>
+            <span className="h-2.5 w-2.5 rounded-full bg-emerald-600 shrink-0 border border-white" />
+            <span className="text-slate-700 truncate">
+              <strong className="text-slate-900">Donor Facility:</strong> {donorFacility} ({donorDistrict})
+            </span>
           </div>
           <div className="flex items-center gap-2">
-            <span className="h-1 w-4 rounded-full bg-[#0284c7]" />
-            <span className="text-slate-500 text-[10px]">Highway Corridor: SH-1 / NH-316</span>
+            <span className="h-2.5 w-2.5 rounded-full bg-[#0C2B4E] shrink-0 border border-white" />
+            <span className="text-slate-700 truncate">
+              <strong className="text-slate-900">Recipient Facility:</strong> {recipientFacility} ({recipientDistrict})
+            </span>
+          </div>
+          <div className="flex items-center gap-2 pt-0.5 border-t border-slate-100">
+            <span className="h-1 w-4 rounded-full bg-[#0284c7] shrink-0" />
+            <span className="text-slate-600 text-[10px] truncate">
+              <strong className="text-slate-800">Highway Corridor:</strong> SH-1 / NH-316
+            </span>
           </div>
         </div>
 
         {/* Map Attribution (Bottom Right) */}
-        <div className="absolute bottom-1 right-2 bg-white/80 backdrop-blur-xs px-2 py-0.5 rounded text-[9px] text-slate-500 font-mono pointer-events-none">
+        <div className="absolute bottom-1 right-2 bg-white/80 backdrop-blur-xs px-2 py-0.5 rounded text-[9px] text-slate-500 font-mono pointer-events-none z-10">
           © OpenStreetMap contributors • Odisha Health GIS
         </div>
       </div>
 
-      {/* Operational Logistics Information Panel */}
-      <div className="bg-slate-50 px-4 py-3 border-t border-slate-200">
+      {/* SECTION H: OPERATIONAL LOGISTICS INFORMATION CARDS */}
+      <div className="bg-slate-50 p-3.5 border-t border-slate-200">
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
           
           {/* Card 1: Donor Facility */}
-          <div className="bg-white border border-slate-200 rounded-xl p-3 shadow-2xs space-y-1">
+          <div className="bg-white border border-slate-200 rounded-xl p-3 shadow-2xs flex flex-col justify-between h-full space-y-1">
             <div className="flex items-center justify-between text-[11px]">
-              <span className="text-emerald-700 font-bold uppercase tracking-wider flex items-center gap-1">
+              <span className="text-emerald-700 font-bold uppercase tracking-wider flex items-center gap-1.5">
                 <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
                 Donor Facility
               </span>
-              <span className="text-[10px] text-slate-400 font-mono font-bold">PURI</span>
+              <span className="text-[10px] text-slate-400 font-mono font-bold uppercase">{donorDistrict}</span>
             </div>
-            <h5 className="text-xs font-bold text-slate-900 truncate" title={donorFacility}>
-              {donorFacility}
-            </h5>
-            <p className="text-[11px] text-slate-500">
-              GPS: <span className="font-mono text-[10px] text-slate-700">{dLat.toFixed(4)}°N, {dLng.toFixed(4)}°E</span>
+            <div>
+              <h5 className="text-xs font-extrabold text-slate-900 truncate" title={donorFacility}>
+                {donorFacility}
+              </h5>
+              <p className="text-[11px] text-slate-500 font-mono mt-0.5">
+                GPS: {dLat.toFixed(4)}°N, {dLng.toFixed(4)}°E
+              </p>
+            </div>
+            <p className="text-[10px] text-emerald-700 font-medium pt-1 border-t border-slate-100">
+              Verified Surplus Hub • Dispatch Ready
             </p>
           </div>
 
-          {/* Card 2: Cargo & Quantity */}
-          <div className="bg-white border border-slate-200 rounded-xl p-3 shadow-2xs space-y-1">
+          {/* Card 2: Allocated Supply */}
+          <div className="bg-white border border-slate-200 rounded-xl p-3 shadow-2xs flex flex-col justify-between h-full space-y-1">
             <div className="flex items-center justify-between text-[11px]">
-              <span className="text-blue-700 font-bold uppercase tracking-wider flex items-center gap-1">
-                <IconPackage size={12} className="text-blue-600" />
+              <span className="text-blue-700 font-bold uppercase tracking-wider flex items-center gap-1.5">
+                <IconPackage size={13} className="text-blue-600" />
                 Allocated Supply
               </span>
               <span className="bg-blue-50 text-blue-800 text-[10px] px-1.5 py-0.5 rounded font-mono font-bold">
                 VERIFIED
               </span>
             </div>
-            <h5 className="text-xs font-bold text-slate-900 truncate">
-              {transferQuantity} Units • {medicineName}
-            </h5>
-            <p className="text-[11px] text-slate-500">
-              Surplus rebalance preserving donor safety threshold.
+            <div>
+              <h5 className="text-xs font-extrabold text-slate-900 truncate" title={`${transferQuantity} Units • ${medicineName}`}>
+                {transferQuantity} Units • {medicineName}
+              </h5>
+              <p className="text-[11px] text-slate-500 mt-0.5">
+                Targeted redistribution allocation
+              </p>
+            </div>
+            <p className="text-[10px] text-blue-700 font-medium pt-1 border-t border-slate-100">
+              Preserves donor safety stock threshold
             </p>
           </div>
 
-          {/* Card 3: Logistics Transit */}
-          <div className="bg-white border border-slate-200 rounded-xl p-3 shadow-2xs space-y-1">
+          {/* Card 3: Transit Estimation */}
+          <div className="bg-white border border-slate-200 rounded-xl p-3 shadow-2xs flex flex-col justify-between h-full space-y-1">
             <div className="flex items-center justify-between text-[11px]">
-              <span className="text-amber-700 font-bold uppercase tracking-wider flex items-center gap-1">
-                <IconClock size={12} className="text-amber-600" />
+              <span className="text-amber-700 font-bold uppercase tracking-wider flex items-center gap-1.5">
+                <IconClock size={13} className="text-amber-600" />
                 Transit Estimation
               </span>
-              <span className="font-mono text-[10px] text-slate-500 font-bold">
+              <span className="font-mono text-[10px] text-slate-600 font-bold">
                 {distanceKm.toFixed(1)} km
               </span>
             </div>
-            <h5 className="text-xs font-bold text-slate-900">
-              ~{estimatedTransitMins} mins via State Highway 1
-            </h5>
-            <p className="text-[11px] text-slate-500">
-              Direct surface corridor across Khordha-Puri border.
+            <div>
+              <h5 className="text-xs font-extrabold text-slate-900 truncate">
+                ~{estimatedTransitMins} mins via State Highway 1
+              </h5>
+              <p className="text-[11px] text-slate-500 mt-0.5">
+                Corridor: NH-316 &rarr; SH-1 Road
+              </p>
+            </div>
+            <p className="text-[10px] text-amber-700 font-medium pt-1 border-t border-slate-100">
+              Low-latency ground transit corridor
             </p>
           </div>
 
-          {/* Card 4: Recipient Facility */}
-          <div className="bg-white border border-slate-200 rounded-xl p-3 shadow-2xs space-y-1">
+          {/* Card 4: Target Need */}
+          <div className="bg-white border border-slate-200 rounded-xl p-3 shadow-2xs flex flex-col justify-between h-full space-y-1">
             <div className="flex items-center justify-between text-[11px]">
-              <span className="text-rose-700 font-bold uppercase tracking-wider flex items-center gap-1">
-                <IconAlertTriangle size={12} className="text-rose-600" />
+              <span className="text-rose-700 font-bold uppercase tracking-wider flex items-center gap-1.5">
+                <IconAlertTriangle size={13} className="text-rose-600" />
                 Target Need
               </span>
               <span className="bg-rose-50 text-rose-800 text-[10px] px-1.5 py-0.5 rounded font-mono font-bold uppercase">
                 {urgencyLevel}
               </span>
             </div>
-            <h5 className="text-xs font-bold text-slate-900 truncate" title={recipientFacility}>
-              {recipientFacility}
-            </h5>
-            <p className="text-[11px] text-slate-500">
-              GPS: <span className="font-mono text-[10px] text-slate-700">{rLat.toFixed(4)}°N, {rLng.toFixed(4)}°E</span>
+            <div>
+              <h5 className="text-xs font-extrabold text-slate-900 truncate" title={recipientFacility}>
+                {recipientFacility}
+              </h5>
+              <p className="text-[11px] text-slate-500 font-mono mt-0.5">
+                GPS: {rLat.toFixed(4)}°N, {rLng.toFixed(4)}°E
+              </p>
+            </div>
+            <p className="text-[10px] text-rose-700 font-medium pt-1 border-t border-slate-100">
+              Immediate stockout mitigation
             </p>
           </div>
 
