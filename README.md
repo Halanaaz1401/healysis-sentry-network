@@ -626,15 +626,15 @@ The project was also reviewed for security issues such as authorization boundari
 
 Hala Naaz is a cybersecurity professional focused on **AI security, secure AI applications, Generative AI, and product-oriented security engineering**. She led the product direction, application development, AI integration, security design, and overall implementation of Healysis.
 
-## Ashraf Sami Mohammed
+## Ashraf Sami Mohammad
 
 **Cybersecurity Professional · VAPT**
 
-Ashraf Sami Mohammed is a cybersecurity professional focused on **Vulnerability Assessment and Penetration Testing (VAPT), application security, security validation, and security testing**. He contributed to the project's security review, testing, validation, and QA activities.
+Ashraf Sami Mohammad is a cybersecurity professional focused on **Vulnerability Assessment and Penetration Testing (VAPT), application security, security validation, and security testing**. He contributed to the project's security review, testing, validation, and QA activities.
 
 ### Built by
 
-**Hala Naaz × Ashraf Sami Mohammed**
+**Hala Naaz × Ashraf Sami Mohammad**
 
 ---
 
@@ -697,27 +697,6 @@ A **10–12 slide** presentation covering:
 
 **https://healysis.ashlynxcyber.in**
 
----
-
-# Final Submission Checklist
-
-- [x] Public GitHub repository
-- [x] Source code pushed to `main`
-- [x] Final README updated
-- [x] Core product workflows tested
-- [x] Security testing completed
-- [x] AI Advisor tested
-- [x] Redistribution workflow tested
-- [x] Geospatial route UI tested
-- [x] Human approval and verification tested
-- [x] Live deployment available
-- [ ] Final screenshots added to `docs/Screenshots/`
-- [ ] 3–5 minute demo video recorded
-- [ ] 10–12 slide pitch deck completed
-- [ ] Final 2–3 line description added to submission form
-- [ ] Deployed URL added to submission form
-- [ ] GitHub URL added to submission form
-- [ ] Final submission form reviewed
 
 ---
 
@@ -733,5 +712,5 @@ This project is released under the **MIT License**, unless otherwise specified b
 </p>
 
 <p align="center">
-  <strong>Hala Naaz × Ashraf Sami Mohammed</strong>
+  <strong>Hala Naaz × Ashraf Sami Mohammad</strong>
 </p>
