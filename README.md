@@ -17,7 +17,7 @@
 </p>
 
 <p align="center">
-  <strong>Built by Hala Naaz × Ashraf Sami Mohammed</strong>
+  <strong>Built by Hala Naaz × Ashraf Sami Mohammad</strong>
 </p>
 
 ---
