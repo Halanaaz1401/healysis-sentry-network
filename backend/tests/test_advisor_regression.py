@@ -419,3 +419,35 @@ def test_14_pending_transfer_intent():
     assert any(term in ans for term in ["transfer", "redistribution", "recommendation"])
     assert any(term in ans for term in ["ors", "pipili", "jatni", "cuttack"])
     db.close()
+
+
+# =========================================================================
+# Regression Test 15: Network-wide Alerts, Forecasts, and Redistribution
+# =========================================================================
+def test_15_network_alerts_and_forecasts_and_redistribution_intents():
+    db = TestingSessionLocal()
+    cdmo = db.query(User).filter(User.role == UserRole.CDMO).first()
+
+    # 1. Network Alerts
+    req_alert = AdvisorChatRequest(message="What are the current alerts across the network?")
+    resp_alert = run_grounded_ai_advisor(req_alert, cdmo, db)
+    assert resp_alert is not None
+    assert "active alerts" in resp_alert.answer.lower()
+    assert "jatni" in resp_alert.answer.lower()
+
+    # 2. Network Forecasts
+    admin = db.query(User).filter(User.role == UserRole.ADMIN).first()
+    req_fc = AdvisorChatRequest(message="What are the current forecasts across the network?")
+    resp_fc = run_grounded_ai_advisor(req_fc, admin, db)
+    assert resp_fc is not None
+    assert "operational forecasts across the network" in resp_fc.answer.lower()
+    assert "jatni" in resp_fc.answer.lower()
+
+    # 3. Network Redistribution
+    req_redist = AdvisorChatRequest(message="Are there any redistribution recommendations across the network?")
+    resp_redist = run_grounded_ai_advisor(req_redist, cdmo, db)
+    assert resp_redist is not None
+    assert "redistribution recommendation" in resp_redist.answer.lower()
+    assert any(t in resp_redist.answer.lower() for t in ["transfer 90 ors", "transfer 100 ors"])
+
+    db.close()

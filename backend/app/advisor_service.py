@@ -448,7 +448,14 @@ def interpret_user_query(
         "facility", "facilities", "hospital", "hospitals", "center", "centres", "phc", "chc", "uphc"
     ]) and not any(k in msg_lower for k in ["resource", "stock", "medicine", "inventory", "supply", "supplies", "ors", "insulin", "paracetamol", "amoxicillin", "cetirizine"])
 
-    if not sq.resource_scope and not sq.unresolved_resources and not has_broad_resource_query and not is_facility_query and request_data:
+    is_network_or_broad_domain = any(p in msg_lower for p in [
+        "across the network", "across network", "in the network", "network forecast",
+        "current forecasts", "what are the forecasts", "what are the current forecasts",
+        "forecasts across", "current alerts", "active alerts",
+        "redistribution", "recommendations", "transfers"
+    ])
+
+    if not sq.resource_scope and not sq.unresolved_resources and not has_broad_resource_query and not is_facility_query and not is_network_or_broad_domain and request_data:
         inherited_res = []
         if getattr(request_data, "history", None):
             for chat_m in reversed(request_data.history):
@@ -792,7 +799,10 @@ def interpret_user_query(
         "network health", "overall network", "most critical alerts", "district has the most",
         "districts have the most", "give me a network"
     ]
-    if any(w in msg_lower for w in net_trigger_words):
+    has_specific_network_topic = any(k in msg_lower for k in [
+        "alert", "alerts", "redistribut", "transfer", "recommendation", "recommendations", "forecast", "forecasts"
+    ])
+    if not has_specific_network_topic and any(w in msg_lower for w in net_trigger_words):
         sq.intent = "NETWORK_INTELLIGENCE"
         sq.answer_style = "DETAILED"
         sq.requested_operation = "network_intelligence"
@@ -1889,6 +1899,46 @@ def format_grounded_operational_answer(
     # Answers: "When will ORS finish?", "ORS kab khatam hoga?", "kitne din chalega?"
     # ==========================================
     if query.intent == "RESOURCE_FORECAST":
+        # Handle multi-facility / network-wide forecast
+        if len(fac_telemetry) > 1 and len(query.facility_scope) != 1:
+            target_res = query.resource_scope[0] if query.resource_scope else None
+            if target_res:
+                sku = target_res["code"]
+                res_name = target_res["name"]
+                lines = [f"Operational forecast for {res_name} across the network:"]
+                for ft in fac_telemetry:
+                    fn = get_clean_facility_name(ft["facility"])
+                    fc = next((c for c in ft.get("forecasts", []) if _matches_sku(c.item_code, sku)), None)
+                    inv_item = next((i for i in ft.get("inventory", []) if _matches_sku(i.item_code, sku)), None)
+                    qty = inv_item.quantity if inv_item else 0
+                    unit = inv_item.unit if inv_item else "units"
+                    doc = fc.days_of_cover if fc and fc.days_of_cover is not None else None
+                    doc_str = f"{doc:.0f} days cover" if doc is not None else "N/A"
+                    tag = " [CRITICAL]" if (doc is not None and doc < 3.0) else (" [LOW]" if (doc is not None and doc < 7.0) else "")
+                    lines.append(f"• {fn}: {qty} {unit} in stock ({doc_str}){tag}")
+                sev = "CRITICAL" if any(any(c.days_of_cover is not None and c.days_of_cover < 3.0 and _matches_sku(c.item_code, sku) for c in ft.get("forecasts", [])) for ft in fac_telemetry) else "SAFE"
+                return "\n".join(lines), sev
+            else:
+                lines = ["Operational forecasts across the network:"]
+                has_critical = False
+                for ft in fac_telemetry:
+                    fn = get_clean_facility_name(ft["facility"])
+                    fcs = ft.get("forecasts", [])
+                    crit = [c for c in fcs if c.days_of_cover is not None and c.days_of_cover < 3.0]
+                    warn = [c for c in fcs if c.days_of_cover is not None and 3.0 <= c.days_of_cover < 7.0]
+                    if crit:
+                        has_critical = True
+                        items_str = ", ".join(f"{c.item_code} ({c.days_of_cover:.0f} days cover)" for c in crit)
+                        lines.append(f"• {fn}: {items_str} [CRITICAL]")
+                    elif warn:
+                        items_str = ", ".join(f"{c.item_code} ({c.days_of_cover:.0f} days cover)" for c in warn)
+                        lines.append(f"• {fn}: {items_str} [LOW]")
+                    else:
+                        min_cover = min((c.days_of_cover for c in fcs if c.days_of_cover is not None), default=None)
+                        min_str = f"min {min_cover:.0f} days cover" if min_cover is not None else "adequate"
+                        lines.append(f"• {fn}: All monitored resources safe ({min_str}) [SAFE]")
+                return "\n".join(lines), "CRITICAL" if has_critical else "SAFE"
+
         target = fac_telemetry[0] if fac_telemetry else None
         if not target:
             return "No facility operational telemetry available.", "SAFE"
