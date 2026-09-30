@@ -436,9 +436,14 @@ def interpret_user_query(
     sq.resource_scope = _match_resources_in_text(user_msg, msg_lower)
 
     # Conversational Context Inheritance:
-    # If no resource is explicitly in the current message and not an unresolved resource,
-    # inspect recent conversation turns (history or database messages)
-    if not sq.resource_scope and not sq.unresolved_resources and request_data:
+    # If no resource is explicitly in the current message, not an unresolved resource,
+    # and not an explicit broad inquiry ("what resources", "resources available", etc.)
+    has_broad_resource_query = any(p in msg_lower for p in [
+        "what resources", "which resources", "resources are available", "available resources",
+        "all resources", "resources at", "what resources are", "list resources", "available medicines",
+        "resources available", "stock available", "available stock"
+    ])
+    if not sq.resource_scope and not sq.unresolved_resources and not has_broad_resource_query and request_data:
         inherited_res = []
         if getattr(request_data, "history", None):
             for chat_m in reversed(request_data.history):
@@ -894,11 +899,36 @@ def interpret_user_query(
         sq.answer_style = "CLARIFICATION"
         return sq
 
+    # A-FAC0. Facility List Intent: "what facilities are available?", "list all facilities"
+    fac_list_phrases = [
+        "what facilities are available", "what facilities do we have", "list all facilities",
+        "list facilities", "show all facilities", "show me all facilities", "which facilities are there",
+        "what are the facilities", "facilities are available", "available facilities",
+        "how many facilities", "all facilities in the network", "facilities in the network",
+        "what facilities are monitored", "facilities are monitored"
+    ]
+    if any(p in msg_lower for p in fac_list_phrases) or clean_msg in ["facilities", "all facilities"]:
+        sq.intent = "FACILITY_LIST"
+        sq.answer_style = "SUMMARY"
+        return sq
+
+    # A-FAC1. Facility Detail Intent: "give me details about Jatni CHC", "tell me about Jatni CHC"
+    fac_detail_phrases = [
+        "details about", "tell me about", "information about", "info about",
+        "give me details", "profile of", "details of", "tell me more about",
+        "describe", "what is", "what do you know about"
+    ]
+    if explicit_matched_facs and any(p in msg_lower for p in fac_detail_phrases):
+        sq.intent = "FACILITY_DETAIL"
+        sq.answer_style = "SUMMARY"
+        return sq
+
     # B. Active Alerts
     alert_keywords = [
         "any alert", "any alerts", "koi alert", "alert kya hai", "which alert", "kaunsa alert",
         "critical alert", "active alerts", "alerts for", "alert hai", "current risk kya hai",
-        "mere center mein koi alert", "alert batao"
+        "mere center mein koi alert", "alert batao", "currently active", "current alert",
+        "alerts active", "alerts are active", "what alerts", "show alerts", "alerts currently"
     ]
     if any(k in msg_lower for k in alert_keywords) or clean_msg in ["alerts", "alert"]:
         sq.intent = "ACTIVE_ALERTS"
@@ -993,11 +1023,14 @@ def interpret_user_query(
 
     # H. Redistribution
     if any(k in msg_lower for k in [
-        "rebalanc", "redistribut", "where should we move", "who can supply", 
-        "which facility can supply", "supply a facility currently at risk", 
-        "can provide extra", "enough to help", "donor", "transfer is currently recommended", 
+        "rebalanc", "redistribut", "where should we move", "who can supply",
+        "which facility can supply", "supply a facility currently at risk",
+        "can provide extra", "enough to help", "donor", "transfer is currently recommended",
         "transfer is recommended", "what transfer is", "what transfer", "pending redistribution",
-        "transfer kya karna", "maal chahiye", "maal bhejna", "kuch bhejna hai", "bhejna chahiye"
+        "transfer kya karna", "maal chahiye", "maal bhejna", "kuch bhejna hai", "bhejna chahiye",
+        "any redistribution", "redistribution recommendation", "redistribution recommendations",
+        "is there any redistribution", "are there any redistribution", "current redistribution",
+        "redistribution for", "transfer recommendation", "transfer recommendations"
     ]):
         sq.intent = "REDISTRIBUTION"
         sq.answer_style = "ACTION"
@@ -1179,7 +1212,7 @@ def format_grounded_operational_answer(
         res_str = ", ".join(query.unresolved_resources)
         catalog_names = ", ".join(item["name"] for item in RESOURCE_CATALOG)
         return (
-            f"I couldn't match '{res_str}' to a resource in the verified Healysis medicine catalog. "
+            f"I don't have enough data to answer that. I couldn't match '{res_str}' to a resource in the verified Healysis medicine catalog. "
             f"Did you mean one of: {catalog_names}? "
             f"Please try again with the correct resource name.",
             "SAFE"
@@ -1188,7 +1221,7 @@ def format_grounded_operational_answer(
     # 2. Unresolved Facility / Location Check
     if query.unresolved_facilities:
         fac_str = ", ".join(query.unresolved_facilities)
-        return f"Data is currently unavailable for {fac_str} in the current Healysis dataset.", "SAFE"
+        return f"I don't have enough data to answer that. Data is currently unavailable for {fac_str} in the current Healysis dataset.", "SAFE"
 
     # 3. Clarification Check
     if query.requires_clarification:
@@ -2695,28 +2728,133 @@ def format_grounded_operational_answer(
             return "\n".join(lines).strip(), sev
 
     # ==========================================
+    # Handler: FACILITY_LIST
+    # Answers: "What facilities are available?", "List all facilities"
+    # ==========================================
+    if query.intent == "FACILITY_LIST":
+        auth_facs = get_user_authorized_facilities(current_user, db)
+        if not auth_facs:
+            return "I don't have that information in the current Healysis data.", "SAFE"
+        role_label = {
+            UserRole.FACILITY_OFFICER: "your assigned facility",
+            UserRole.CDMO: "your authorized district",
+            UserRole.ADMIN: "the network"
+        }.get(current_user.role, "your authorized scope")
+        lines = [f"Facilities available in {role_label}:\n"]
+        for fac in auth_facs:
+            dist_str = f" ({fac.district}, {fac.state})" if fac.district else ""
+            ftype = fac.facility_type.value if hasattr(fac.facility_type, 'value') else str(fac.facility_type or fac.facility_code)
+            lines.append(f"• {fac.name}{dist_str} [{ftype}]")
+        lines.append(f"\nTotal: {len(auth_facs)} facilities.")
+        return "\n".join(lines), "SAFE"
+
+    # ==========================================
+    # Handler: FACILITY_DETAIL
+    # Answers: "Give me details about Jatni CHC"
+    # ==========================================
+    if query.intent == "FACILITY_DETAIL":
+        target_facs = query.facility_scope if query.facility_scope else get_user_authorized_facilities(current_user, db)
+        if not target_facs:
+            return "I don't have that information in the current Healysis data.", "SAFE"
+        lines = []
+        for fac in target_facs:
+            inv_list = db.query(Inventory).filter(Inventory.facility_id == fac.id).all()
+            fcs_list = db.query(Forecast).filter(Forecast.facility_id == fac.id).all()
+            alts_list = db.query(Alert).filter(Alert.facility_id == fac.id, Alert.status == "ACTIVE").all()
+            bed = db.query(Bed).filter(Bed.facility_id == fac.id).first()
+            staff = db.query(Personnel).filter(Personnel.facility_id == fac.id).first()
+            lines.append(f"Facility: {fac.name}")
+            if fac.district:
+                lines.append(f"• District: {fac.district}, {fac.state}")
+            ftype = fac.facility_type.value if hasattr(fac.facility_type, 'value') else str(fac.facility_type or '')
+            if ftype:
+                lines.append(f"• Type: {ftype}")
+            if fac.facility_code:
+                lines.append(f"• Code: {fac.facility_code}")
+            if fac.latitude and fac.longitude:
+                lines.append(f"• Location: {fac.latitude:.4f}N, {fac.longitude:.4f}E")
+            # Inventory summary
+            if inv_list:
+                lines.append(f"• Inventory ({len(inv_list)} items):")
+                for inv in inv_list:
+                    fc = next((c for c in fcs_list if c.item_code == inv.item_code), None)
+                    doc = fc.days_of_cover if fc else None
+                    med_name = inv.item_name
+                    for cat in RESOURCE_CATALOG:
+                        if cat["code"] == inv.item_code:
+                            med_name = cat["name"]
+                            break
+                    doc_str = f", {doc:.0f} days cover" if doc is not None else ""
+                    risk_tag = " [CRITICAL]" if (doc is not None and doc < 3.0) else (" [LOW]" if (doc is not None and doc < 7.0) else "")
+                    lines.append(f"  - {med_name}: {inv.quantity} {inv.unit}{doc_str}{risk_tag}")
+            # Bed capacity
+            if bed:
+                lines.append(f"• Beds: {bed.general_capacity} general, {bed.icu_capacity} ICU, {bed.oxygen_capacity} oxygen")
+            # Staff
+            if staff:
+                lines.append(f"• Staff: {staff.doctors_count} doctors, {staff.nurses_count} nurses, {staff.pharmacists_count} pharmacists")
+            # Active alerts
+            if alts_list:
+                alert_str = ", ".join(getattr(a, 'title', getattr(a, 'message', 'Alert')) for a in alts_list)
+                lines.append(f"• Active Alerts: {alert_str}")
+            else:
+                lines.append("• Active Alerts: None")
+            lines.append("")
+        sev = "CRITICAL" if any(
+            any(fc.days_of_cover < 3.0 for fc in db.query(Forecast).filter(Forecast.facility_id == f.id).all())
+            for f in target_facs
+        ) else "SAFE"
+        return "\n".join(lines).strip(), sev
+
+    # ==========================================
     # Handler: REDISTRIBUTION
     # ==========================================
     if query.intent == "REDISTRIBUTION":
-        recs = db.query(Recommendation).filter(Recommendation.status == "PENDING_HUMAN_APPROVAL").all()
+        # Filter recommendations by facility scope if user asked about a specific facility
+        scoped_fac_ids = [f.id for f in query.facility_scope] if query.facility_scope else []
+        rec_query = db.query(Recommendation).filter(Recommendation.status == "PENDING_HUMAN_APPROVAL")
+
+        # If specific facility(ies) were named in the query, filter to relevant recommendations only
+        if scoped_fac_ids and len(scoped_fac_ids) < 5:  # Specific facility query (not all-facilities)
+            rec_query = rec_query.filter(
+                (Recommendation.donor_facility_id.in_(scoped_fac_ids)) |
+                (Recommendation.recipient_facility_id.in_(scoped_fac_ids))
+            )
+            # For Facility Officers, always scope to their facility
+        if current_user.role == UserRole.FACILITY_OFFICER and current_user.facility_id:
+            rec_query = rec_query.filter(
+                (Recommendation.donor_facility_id == current_user.facility_id) |
+                (Recommendation.recipient_facility_id == current_user.facility_id)
+            )
+
+        recs = rec_query.all()
+
         if recs:
-            rec = recs[0]
-            donor = db.query(Facility).filter(Facility.id == rec.donor_facility_id).first()
-            recip = db.query(Facility).filter(Facility.id == rec.recipient_facility_id).first()
-            dname = get_clean_facility_name(donor) if donor else f"Facility #{rec.donor_facility_id}"
-            rname = get_clean_facility_name(recip) if recip else f"Facility #{rec.recipient_facility_id}"
-            res_item = next((cat for cat in RESOURCE_CATALOG if cat["code"] == rec.item_code), None)
-            res_name = res_item["name"] if res_item else "ORS"
-            res_unit = res_item["unit"] if res_item else "sachets"
+            lines = []
+            for rec in recs:
+                donor = db.query(Facility).filter(Facility.id == rec.donor_facility_id).first()
+                recip = db.query(Facility).filter(Facility.id == rec.recipient_facility_id).first()
+                dname = get_clean_facility_name(donor) if donor else f"Facility #{rec.donor_facility_id}"
+                rname = get_clean_facility_name(recip) if recip else f"Facility #{rec.recipient_facility_id}"
+                res_item = next((cat for cat in RESOURCE_CATALOG if cat["code"] == rec.item_code), None)
+                res_name = res_item["name"] if res_item else "ORS"
+                res_unit = res_item["unit"] if res_item else "sachets"
+                rec_status_str = rec.status.value if hasattr(rec.status, "value") else str(rec.status)
+                lines.append(f"• Transfer {rec.recommended_quantity} {res_name} {res_unit} from {dname} to {rname} (Status: {rec_status_str})")
+            prefix = f"There {'is' if len(recs) == 1 else 'are'} {len(recs)} active redistribution recommendation{'s' if len(recs) > 1 else ''}:"
             if query.target_lang == "hi":
-                ans = f"वर्तमान सिफारिश {dname} से {rname} तक {rec.recommended_quantity} {res_name} {res_unit} ट्रांसफर करने की है।"
+                ans = f"वर्तमान में {len(recs)} पुनर्वितरण सिफारिश उपलब्ध है:\n\n" + "\n".join(lines)
             elif query.target_lang == "hinglish":
-                ans = f"Current recommendation {dname} se {rname} tak {rec.recommended_quantity} {res_name} {res_unit} transfer karne ki hai."
+                ans = f"Currently {len(recs)} redistribution recommendation available hai:\n\n" + "\n".join(lines)
             else:
-                ans = f"The current recommendation is to transfer {rec.recommended_quantity} {res_name} {res_unit} from {dname} to {rname}."
+                ans = prefix + "\n\n" + "\n".join(lines)
             return ans, "CRITICAL"
         else:
-            return "All monitored facilities currently maintain adequate stock levels.", "SAFE"
+            # No recommendations found for the requested scope
+            if scoped_fac_ids and query.facility_scope:
+                fac_names = ", ".join(get_clean_facility_name(f) for f in query.facility_scope)
+                return f"There are currently no redistribution recommendations for {fac_names}.", "SAFE"
+            return "There are currently no pending redistribution recommendations. All monitored facilities maintain adequate stock levels.", "SAFE"
 
     # ==========================================
     # Handler: SYSTEM_RECOMMENDATION
@@ -3400,11 +3538,15 @@ def run_grounded_ai_advisor(
     target_lang_desc = "Hindi (Devanagari script)" if is_hindi_prompt else ("Hinglish (Hindi written phonetically in Roman script)" if is_hinglish_prompt else "English")
 
     genai_client = get_genai_client()
-    skip_gemini = sq.intent in [
-        "WHY", "WHAT_IF_SIMULATION", "VERIFICATION", "FACILITY_HIGHEST_RISK",
-        "SYSTEM_RECOMMENDATION", "REDISTRIBUTION", "BROAD_RESOURCE_OVERVIEW",
-        "LOW_STOCK_FACILITIES", "RESOURCE_HIGHEST_STOCK"
-    ] or (sq.intent == "DIRECT_RESOURCE" and len(sq.facility_scope) > 1)
+    skip_gemini = (
+        sq.intent in [
+            "WHY", "WHAT_IF_SIMULATION", "VERIFICATION", "FACILITY_HIGHEST_RISK",
+            "SYSTEM_RECOMMENDATION", "REDISTRIBUTION", "BROAD_RESOURCE_OVERVIEW",
+            "LOW_STOCK_FACILITIES", "RESOURCE_HIGHEST_STOCK", "FACILITY_LIST", "FACILITY_DETAIL"
+        ]
+        or (sq.intent == "DIRECT_RESOURCE" and len(sq.facility_scope) > 1)
+        or ("I don't have enough data" in answer_text)
+    )
 
     if genai_client and not skip_gemini:
         try:
@@ -3417,7 +3559,7 @@ def run_grounded_ai_advisor(
                 f"User Question: {request_data.message}\n\n"
                 f"Grounded Verified Answer: {answer_text}\n"
                 f"Authoritative Severity: {severity_level}\n\n"
-                f"Instructions: Express the verified answer directly and politely in {target_lang_desc}. Keep the response concise (1-3 short sentences), direct, and operational. Output PLAIN TEXT ONLY. CRITICAL RULES: 1. Do NOT use any Markdown formatting: no asterisks (** or *), no headers (###), no bullet dashes (-), no horizontal rules (---). 2. Answer ONLY what the user asked. Do NOT generate unprompted reports, district breakdowns, or full inventory tables. 3. If the question is about a specific resource or facility, talk ONLY about that resource and facility. 4. Preserve all numbers, quantities, facility names, dates, and severity exactly as provided. Never invent or distort factual numbers."
+                f"Instructions: Express the verified answer directly and politely in {target_lang_desc}. Keep the response concise, clear, and operational. Use short paragraphs or bullet points if helpful. CRITICAL RULES: 1. Answer ONLY what the user asked. Do NOT generate unprompted reports, district breakdowns, or full inventory tables. 2. If the question is about a specific resource or facility, talk ONLY about that resource and facility. 3. Preserve all numbers, quantities, facility names, dates, and severity exactly as provided. Never invent or alter any factual numbers or operational values."
             )
             response = genai_client.models.generate_content(
                 model=settings.GEMINI_MODEL,
@@ -3425,7 +3567,13 @@ def run_grounded_ai_advisor(
             )
             llm_text = response.text if response and hasattr(response, "text") else ""
             if llm_text and len(llm_text.strip()) > 10:
-                answer_text = clean_markdown_artifacts(llm_text.strip())
+                # Factual numeric consistency check: ensure Gemini did not invent or alter numbers
+                nums_in_answer = set(re.findall(r'\b\d+(?:\.\d+)?\b', answer_text))
+                nums_in_llm = set(re.findall(r'\b\d+(?:\.\d+)?\b', llm_text))
+                if nums_in_llm.issubset(nums_in_answer):
+                    answer_text = clean_markdown_artifacts(llm_text.strip())
+                else:
+                    logger.warning("Gemini attempted to alter or invent numbers. Preserving verified backend answer.")
         except Exception as e:
             logger.warning(f"Gemini API execution note: {e}")
 

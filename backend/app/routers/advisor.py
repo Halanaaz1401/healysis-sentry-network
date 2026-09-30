@@ -83,16 +83,32 @@ def get_conversation_endpoint(
     Retrieves full details and message history for a specific conversation.
     Enforces strict ownership: returns 404 if not found or owned by another user.
     """
-    convo = (
-        db.query(Conversation)
-        .filter(Conversation.id == conversation_id, Conversation.user_id == current_user.id)
-        .first()
-    )
-    if not convo:
+    existing_any = db.query(Conversation).filter(Conversation.id == conversation_id).first()
+    if existing_any and existing_any.user_id != current_user.id:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Conversation not found."
         )
+    convo = existing_any
+    if not convo:
+        # Graceful recovery from stale/invalid conversation ID:
+        # Select user's latest conversation or create a fresh one instead of throwing 404
+        convo = (
+            db.query(Conversation)
+            .filter(Conversation.user_id == current_user.id)
+            .order_by(Conversation.updated_at.desc())
+            .first()
+        )
+        if not convo:
+            convo = Conversation(
+                user_id=current_user.id,
+                title="New Chat",
+                created_at=utc_now(),
+                updated_at=utc_now()
+            )
+            db.add(convo)
+            db.commit()
+            db.refresh(convo)
 
     # Order messages chronologically
     messages = (
@@ -123,16 +139,25 @@ def post_conversation_message_endpoint(
     persists both user and advisor messages to the database, and updates conversation metadata.
     Enforces strict ownership: returns 404 if conversation is not owned by current user.
     """
-    convo = (
-        db.query(Conversation)
-        .filter(Conversation.id == conversation_id, Conversation.user_id == current_user.id)
-        .first()
-    )
-    if not convo:
+    existing_any = db.query(Conversation).filter(Conversation.id == conversation_id).first()
+    if existing_any and existing_any.user_id != current_user.id:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Conversation not found."
         )
+    convo = existing_any
+    if not convo:
+        # Graceful recovery from stale/invalid conversation ID: create a valid conversation
+        title = generate_conversation_title(request.message)
+        convo = Conversation(
+            user_id=current_user.id,
+            title=title,
+            created_at=utc_now(),
+            updated_at=utc_now()
+        )
+        db.add(convo)
+        db.commit()
+        db.refresh(convo)
 
     # Facility scoping check
     if current_user.role == UserRole.FACILITY_OFFICER:
@@ -238,17 +263,15 @@ def advisor_chat_endpoint(
     # Route through conversation persistence
     convo = None
     if request.conversation_id:
-        convo = (
-            db.query(Conversation)
-            .filter(Conversation.id == request.conversation_id, Conversation.user_id == current_user.id)
-            .first()
-        )
-        if not convo:
+        existing_any = db.query(Conversation).filter(Conversation.id == request.conversation_id).first()
+        if existing_any and existing_any.user_id != current_user.id:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Conversation not found."
             )
-    else:
+        convo = existing_any
+    if not convo:
+        # Graceful recovery if conversation_id was stale, invalid, or omitted
         title = generate_conversation_title(request.message)
         convo = Conversation(
             user_id=current_user.id,
