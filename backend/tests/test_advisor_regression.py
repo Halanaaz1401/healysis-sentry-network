@@ -347,3 +347,75 @@ def test_10_stale_conversation_recovery():
     assert convo is not None
     assert convo.user_id == fo.id
     db.close()
+
+
+# =========================================================================
+# Regression Test 11: CDMO District Scoped Facility List
+# =========================================================================
+def test_11_cdmo_district_scoped_facility_list():
+    db = TestingSessionLocal()
+    cdmo = db.query(User).filter(User.role == UserRole.CDMO).first()
+
+    req = AdvisorChatRequest(message="What facilities are in Khordha?")
+    resp = run_grounded_ai_advisor(req, cdmo, db)
+
+    assert resp is not None
+    ans = resp.answer.lower()
+    assert "jatni chc" in ans
+    assert "cuttack" not in ans
+    assert "puri" not in ans
+    db.close()
+
+
+# =========================================================================
+# Regression Test 12: Single Resource Query Not Dumping Facility Profile
+# =========================================================================
+def test_12_single_resource_query_not_dumping_facility_profile():
+    db = TestingSessionLocal()
+    cdmo = db.query(User).filter(User.role == UserRole.CDMO).first()
+
+    req = AdvisorChatRequest(message="What is the ORS stock at Jatni CHC?")
+    resp = run_grounded_ai_advisor(req, cdmo, db)
+
+    assert resp is not None
+    ans = resp.answer.lower()
+    # Must focus on ORS (or Insulin in test DB)
+    assert any(term in ans for term in ["ors", "insulin"])
+    # Must NOT dump general facility profile beds or doctors
+    assert "beds:" not in ans
+    assert "staff:" not in ans
+    db.close()
+
+
+# =========================================================================
+# Regression Test 13: Stockout Alert Natural Language Query
+# =========================================================================
+def test_13_stockout_alert_intent():
+    db = TestingSessionLocal()
+    cdmo = db.query(User).filter(User.role == UserRole.CDMO).first()
+
+    req = AdvisorChatRequest(message="What is the current stockout alert?")
+    resp = run_grounded_ai_advisor(req, cdmo, db)
+
+    assert resp is not None
+    ans = resp.answer.lower()
+    assert "alert" in ans
+    assert "jatni" in ans
+    db.close()
+
+
+# =========================================================================
+# Regression Test 14: Pending Transfer Natural Language Query
+# =========================================================================
+def test_14_pending_transfer_intent():
+    db = TestingSessionLocal()
+    cdmo = db.query(User).filter(User.role == UserRole.CDMO).first()
+
+    req = AdvisorChatRequest(message="Is there a pending transfer?")
+    resp = run_grounded_ai_advisor(req, cdmo, db)
+
+    assert resp is not None
+    ans = resp.answer.lower()
+    assert any(term in ans for term in ["transfer", "redistribution", "recommendation"])
+    assert any(term in ans for term in ["ors", "pipili", "jatni", "cuttack"])
+    db.close()

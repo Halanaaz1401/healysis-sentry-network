@@ -441,9 +441,14 @@ def interpret_user_query(
     has_broad_resource_query = any(p in msg_lower for p in [
         "what resources", "which resources", "resources are available", "available resources",
         "all resources", "resources at", "what resources are", "list resources", "available medicines",
-        "resources available", "stock available", "available stock"
+        "resources available", "stock available", "available stock", "stock situation", "current stock situation",
+        "what is the stock", "what is the current stock", "stock status", "inventory status", "stock at"
     ])
-    if not sq.resource_scope and not sq.unresolved_resources and not has_broad_resource_query and request_data:
+    is_facility_query = any(k in msg_lower for k in [
+        "facility", "facilities", "hospital", "hospitals", "center", "centres", "phc", "chc", "uphc"
+    ]) and not any(k in msg_lower for k in ["resource", "stock", "medicine", "inventory", "supply", "supplies", "ors", "insulin", "paracetamol", "amoxicillin", "cetirizine"])
+
+    if not sq.resource_scope and not sq.unresolved_resources and not has_broad_resource_query and not is_facility_query and request_data:
         inherited_res = []
         if getattr(request_data, "history", None):
             for chat_m in reversed(request_data.history):
@@ -899,13 +904,15 @@ def interpret_user_query(
         sq.answer_style = "CLARIFICATION"
         return sq
 
-    # A-FAC0. Facility List Intent: "what facilities are available?", "list all facilities"
+    # A-FAC0. Facility List Intent: "what facilities are available?", "list all facilities", "what facilities are in Khordha?"
     fac_list_phrases = [
         "what facilities are available", "what facilities do we have", "list all facilities",
         "list facilities", "show all facilities", "show me all facilities", "which facilities are there",
         "what are the facilities", "facilities are available", "available facilities",
         "how many facilities", "all facilities in the network", "facilities in the network",
-        "what facilities are monitored", "facilities are monitored"
+        "what facilities are monitored", "facilities are monitored",
+        "what facilities are in", "which facilities are in", "facilities in", "facilities are in",
+        "facilities of", "facilities list"
     ]
     if any(p in msg_lower for p in fac_list_phrases) or clean_msg in ["facilities", "all facilities"]:
         sq.intent = "FACILITY_LIST"
@@ -916,9 +923,15 @@ def interpret_user_query(
     fac_detail_phrases = [
         "details about", "tell me about", "information about", "info about",
         "give me details", "profile of", "details of", "tell me more about",
-        "describe", "what is", "what do you know about"
+        "describe", "what do you know about"
     ]
-    if explicit_matched_facs and any(p in msg_lower for p in fac_detail_phrases):
+    is_general_profile_query = any(p in msg_lower for p in fac_detail_phrases) or (
+        "what is" in msg_lower and not any(k in msg_lower for k in [
+            "stock", "ors", "paracetamol", "insulin", "amoxicillin", "cetirizine", "forecast", "alert", "alerts",
+            "resource", "resources", "risk", "status", "situation", "cover", "inventory"
+        ])
+    )
+    if explicit_matched_facs and not sq.resource_scope and is_general_profile_query:
         sq.intent = "FACILITY_DETAIL"
         sq.answer_style = "SUMMARY"
         return sq
@@ -926,11 +939,13 @@ def interpret_user_query(
     # B. Active Alerts
     alert_keywords = [
         "any alert", "any alerts", "koi alert", "alert kya hai", "which alert", "kaunsa alert",
-        "critical alert", "active alerts", "alerts for", "alert hai", "current risk kya hai",
+        "critical alert", "critical alerts", "active alerts", "active alert", "alerts for", "alert hai", "current risk kya hai",
         "mere center mein koi alert", "alert batao", "currently active", "current alert",
-        "alerts active", "alerts are active", "what alerts", "show alerts", "alerts currently"
+        "alerts active", "alerts are active", "what alerts", "show alerts", "alerts currently",
+        "stockout alert", "stockout alerts", "current stockout alert", "any active alerts"
     ]
-    if any(k in msg_lower for k in alert_keywords) or clean_msg in ["alerts", "alert"]:
+    has_alert_query = ("alert" in msg_lower or "alerts" in msg_lower) and any(w in msg_lower for w in ["what", "are there", "is there", "any", "which", "current", "active", "show", "tell", "does", "have"])
+    if has_alert_query or any(k in msg_lower for k in alert_keywords) or clean_msg in ["alerts", "alert"]:
         sq.intent = "ACTIVE_ALERTS"
         sq.answer_style = "DETAILED"
         return sq
@@ -949,9 +964,11 @@ def interpret_user_query(
     forecast_keywords = [
         "when will", "kab khatam", "kitne din chalega", "kitne din chalegi", "kitne din ka hai",
         "how many days will", "how long will", "stock kitne din", "expected stockout",
-        "when will stockout", "stockout kab", "kab tak chalega", "chalega?", "kab finish"
+        "when will stockout", "stockout kab", "kab tak chalega", "chalega?", "kab finish",
+        "forecast for", "what is the forecast", "what is the ors forecast", "the forecast", "forecast",
+        "expected to face a stockout", "face a stockout"
     ]
-    if any(k in msg_lower for k in forecast_keywords) or clean_msg in ["forecast", "forecast?"] or (len(sq.resource_scope) == 1 and ("kab" in msg_lower or "chalega" in msg_lower)):
+    if (any(k in msg_lower for k in forecast_keywords) or clean_msg in ["forecast", "forecast?"] or (len(sq.resource_scope) == 1 and ("kab" in msg_lower or "chalega" in msg_lower))) and not any(k in msg_lower for k in ["forecast risk", "forecast risks"]):
         sq.intent = "RESOURCE_FORECAST"
         sq.answer_style = "DIRECT"
         return sq
@@ -978,7 +995,10 @@ def interpret_user_query(
         "needs attention", "pehle refill", "dhyan dena chahiye", "kis cheez pe dhyan", "sabse important problem",
         "isme problem kya hai", "which resource is most critical", "most critical", "least coverage", "at risk",
         "stockout risk", "critical risk", "stockout soon", "face a stockout", "likely to face a stockout",
-        "likely to stockout", "jaldi stockout", "stockout hone wali", "stockout hone wala"
+        "likely to stockout", "jaldi stockout", "stockout hone wali", "stockout hone wala",
+        "forecast risk", "forecast risks", "current forecast risks", "current risks", "risks across the network",
+        "which resources are at risk", "resources are at risk", "which resources are expected to face a stockout",
+        "what are the current forecast risks", "is jatni chc at risk", "at risk"
     ]
     if any(k in msg_lower for k in risk_keywords) or clean_msg in ["risk", "risk?", "problem", "problem?"] or any(k in user_msg for k in ["समस्या", "परेशानी", "गंभीर", "क्या खत्म होने वाला"]):
         sq.intent = "RESOURCE_RISK"
@@ -1030,7 +1050,11 @@ def interpret_user_query(
         "transfer kya karna", "maal chahiye", "maal bhejna", "kuch bhejna hai", "bhejna chahiye",
         "any redistribution", "redistribution recommendation", "redistribution recommendations",
         "is there any redistribution", "are there any redistribution", "current redistribution",
-        "redistribution for", "transfer recommendation", "transfer recommendations"
+        "redistribution for", "transfer recommendation", "transfer recommendations",
+        "waiting for resources", "waiting for resource", "waiting for transfer",
+        "pending transfer", "pending transfers", "is there a transfer", "any pending transfer",
+        "where should resources be redistributed", "where should resources be moved",
+        "redistributed", "transferred", "is any facility waiting", "waiting for"
     ]):
         sq.intent = "REDISTRIBUTION"
         sq.answer_style = "ACTION"
@@ -1087,7 +1111,8 @@ def interpret_user_query(
         "resource status", "resource overview", "current resources", "resource summary",
         "give me a resource summary",
         "resources are available", "resources do we have", "what resources are",
-        "give me a report on resources", "give me resource overview", "report on resources"
+        "give me a report on resources", "give me resource overview", "report on resources",
+        "stock situation", "current stock situation", "what is the stock situation", "stock status at"
     ]
     if len(sq.resource_scope) == 0 and (any(p in msg_lower for p in broad_overview_phrases) or clean_msg in [
         "resources", "resources?", "available resources", "resource report", "resource status", "resource overview",
@@ -1876,7 +1901,24 @@ def format_grounded_operational_answer(
             res_unit = target_res["unit"]
             inv = next((i for i in target["inventory"] if _matches_sku(i.item_code, sku)), None)
             fc = next((c for c in target["forecasts"] if _matches_sku(c.item_code, sku)), None)
-        else:
+        if not target_res and target.get("forecasts") and len(target["forecasts"]) > 1:
+            lines = [f"Forecast for {fname}:"]
+            for c in target["forecasts"]:
+                inv_item = next((i for i in target["inventory"] if _matches_sku(i.item_code, c.item_code)), None)
+                qty_val = inv_item.quantity if inv_item else 0
+                unit_val = inv_item.unit if inv_item else "units"
+                rname = c.item_code
+                for cat in RESOURCE_CATALOG:
+                    if cat["code"] == c.item_code:
+                        rname = cat["name"]
+                        break
+                d_str = f"{c.days_of_cover:.0f} days cover" if c.days_of_cover is not None else "N/A"
+                tag = " [CRITICAL]" if (c.days_of_cover is not None and c.days_of_cover < 3.0) else (" [LOW]" if (c.days_of_cover is not None and c.days_of_cover < 7.0) else "")
+                lines.append(f"• {rname}: {qty_val} {unit_val} in stock ({d_str}){tag}")
+            sev = "CRITICAL" if any(c.days_of_cover is not None and c.days_of_cover < 3.0 for c in target["forecasts"]) else "SAFE"
+            return "\n".join(lines), sev
+
+        if not target_res:
             fc_sorted = sorted(target["forecasts"], key=lambda c: c.days_of_cover if c.days_of_cover is not None else 99.0)
             fc = fc_sorted[0] if fc_sorted else None
             sku = fc.item_code if fc else "MED-ORS-SACHET"
@@ -2733,9 +2775,13 @@ def format_grounded_operational_answer(
     # ==========================================
     if query.intent == "FACILITY_LIST":
         auth_facs = get_user_authorized_facilities(current_user, db)
+        if query.district:
+            auth_facs = [f for f in auth_facs if f.district and f.district.lower() == query.district.lower()]
         if not auth_facs:
+            if query.district:
+                return f"No facilities found in {query.district} within your authorized scope.", "SAFE"
             return "I don't have that information in the current Healysis data.", "SAFE"
-        role_label = {
+        role_label = f"{query.district} district" if query.district else {
             UserRole.FACILITY_OFFICER: "your assigned facility",
             UserRole.CDMO: "your authorized district",
             UserRole.ADMIN: "the network"
@@ -2745,7 +2791,7 @@ def format_grounded_operational_answer(
             dist_str = f" ({fac.district}, {fac.state})" if fac.district else ""
             ftype = fac.facility_type.value if hasattr(fac.facility_type, 'value') else str(fac.facility_type or fac.facility_code)
             lines.append(f"• {fac.name}{dist_str} [{ftype}]")
-        lines.append(f"\nTotal: {len(auth_facs)} facilities.")
+        lines.append(f"\nTotal: {len(auth_facs)} facilit{'y' if len(auth_facs) == 1 else 'ies'}.")
         return "\n".join(lines), "SAFE"
 
     # ==========================================
@@ -3542,7 +3588,8 @@ def run_grounded_ai_advisor(
         sq.intent in [
             "WHY", "WHAT_IF_SIMULATION", "VERIFICATION", "FACILITY_HIGHEST_RISK",
             "SYSTEM_RECOMMENDATION", "REDISTRIBUTION", "BROAD_RESOURCE_OVERVIEW",
-            "LOW_STOCK_FACILITIES", "RESOURCE_HIGHEST_STOCK", "FACILITY_LIST", "FACILITY_DETAIL"
+            "LOW_STOCK_FACILITIES", "RESOURCE_HIGHEST_STOCK", "FACILITY_LIST", "FACILITY_DETAIL",
+            "ACTIVE_ALERTS", "RESOURCE_FORECAST"
         ]
         or (sq.intent == "DIRECT_RESOURCE" and len(sq.facility_scope) > 1)
         or ("I don't have enough data" in answer_text)
